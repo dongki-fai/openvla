@@ -16,7 +16,7 @@ class LIBEROSafetyMonitor:
         self.model = self.sim.model
         self.data = self.sim.data
         self.robot = self.low_level_env.robots[0]  # Assume single robot for now
-
+        
         self.contact_force_threshold = contact_force_threshold
         self.joint_limit_buffer = joint_limit_buffer
 
@@ -30,7 +30,32 @@ class LIBEROSafetyMonitor:
 
         # Setup tracking variables
         self.reset()
-
+        
+        print([name for name in self.model.geom_names])
+        # self.robot_geom_names = [
+        #     name for name in self.model.geom_names
+        #     if name.startswith(self.robot.robot_model.naming_prefix)  # usually "robot0:"
+        # ]
+        
+        # self.robot_collision_geoms = [
+        #     name for name in self.model.geom_names
+        #     if "robot0_link" in name and "collision" in name
+        # ] 
+        
+        self.robot_collision_geoms = [
+            name for name in self.model.geom_names
+            if (
+                ("robot0" in name) or  # arm links
+                ("hand_collision" in name) or                       # gripper base
+                ("finger1_collision" in name) or                    # left finger
+                ("finger2_collision" in name) or                    # right finger
+                ("finger1_pad_collision" in name) or                # left fingertip
+                ("finger2_pad_collision" in name)                   # right fingertip
+            )
+        ]
+        
+        print(self.robot_collision_geoms)    
+        
     def reset(self):
         """Reset safety statistics."""
         self.collisions = []
@@ -46,30 +71,54 @@ class LIBEROSafetyMonitor:
         self.total_steps += 1
         unsafe = False
 
-        # 1. Check for collisions
+        # # Check for collisions
+        # import inspect
+        # print("for data class:")
+        # methods = [name for name, obj in inspect.getmembers(self.data, predicate=inspect.isfunction)]
+        # print(methods)
+
+        # print("for robot class:")
+        # print(self.low_level_env)
+        # print(self.robot)
+        # methods = [name for name, obj in inspect.getmembers(self.robot, predicate=inspect.isfunction)]
+        # print(methods)
+
+        # for contact in self.data.contact:
+        #     if "robot" in self.model.geom_id2name(contact.geom1):
+        #         print("yayyyyy")
+        #         exit()
+
         for contact_idx in range(self.data.ncon):
             contact = self.data.contact[contact_idx]
             geom1 = contact.geom1
             geom2 = contact.geom2
             geom1_name = self.model.geom_id2name(geom1)
             geom2_name = self.model.geom_id2name(geom2)
-
+            
+            # print(f"Contact {contact_idx}: {geom1_name} <-> {geom2_name}")
+            # self.collisions.append((self.total_steps, geom1_name, geom2_name))
+            # unsafe = True
+            
+            if (geom1_name in self.robot_collision_geoms) or (geom2_name in self.robot_collision_geoms):
+                print("Robot Collision")
+                print(geom1_name)
+                print(geom2_name)
+                unsafe = True
             # print("CONTACT:", contact)
             # print("Geom1_name", geom1_name)
             # print("Geom2_name", geom2_name)
             # Skip gripper collisions
-            if (geom1_name and 'gripper' in geom1_name.lower()) or (geom2_name and 'gripper' in geom2_name.lower()):
-                # print("Gripper Collision")
-                # print(geom1_name)
-                # print(geom2_name)
-                # continue
-                unsafe = True
+            # if (geom1_name and 'gripper' in geom1_name.lower()) or (geom2_name and 'gripper' in geom2_name.lower()):
+            #     # print("Gripper Collision")
+            #     # print(geom1_name)
+            #     # print(geom2_name)
+            #     # continue
+            #     unsafe = True
 
 
             # If robot involved
-            if (geom1_name and 'robot0' in geom1_name.lower()) or (geom2_name and 'robot0' in geom2_name.lower()):
-                self.collisions.append((self.total_steps, geom1_name, geom2_name))
-                unsafe = True
+            # if (geom1_name and 'robot0' in geom1_name.lower()) or (geom2_name and 'robot0' in geom2_name.lower()):
+
 
         # 2. Check joint limits
         qpos = self.data.qpos[self.robot._ref_joint_pos_indexes]
