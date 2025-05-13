@@ -7,7 +7,7 @@ import imageio
 import numpy as np
 import tensorflow as tf
 from libero.libero import get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
+from libero.libero.envs import OffScreenRenderEnv, ControlEnv
 
 from experiments.robot.robot_utils import (
     DATE,
@@ -15,15 +15,32 @@ from experiments.robot.robot_utils import (
 )
 
 
-def get_libero_env(task, model_family, resolution=256):
+def get_libero_env(task, model_family, resolution=256, use_viewer=False):
     """Initializes and returns the LIBERO environment, along with the task description."""
     task_description = task.language
     task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
     env_args = {"bddl_file_name": task_bddl_file, "camera_heights": resolution, "camera_widths": resolution}
-    env = OffScreenRenderEnv(**env_args)
-    env.seed(0)  # IMPORTANT: seed seems to affect object positions even when using fixed initial state
-    return env, task_description
+    
+    if use_viewer:
+        # Interactive rendering with viewer (disable offscreen rendering)
+        env_args.update({
+            "has_renderer": True,
+            "has_offscreen_renderer": False,
+            "use_camera_obs": False,  # no offscreen obs in viewer mode
+            "renderer": "mujoco",
+        })
+        env = ControlEnv(**env_args)
+    else:
+        # Headless + offscreen rendering for image observations
+        env_args.update({
+            "has_renderer": False,
+            "has_offscreen_renderer": True,
+            "use_camera_obs": True,
+        })
+        env = OffScreenRenderEnv(**env_args)
 
+    env.seed(0)
+    return env, task_description
 
 def get_libero_dummy_action(model_family: str):
     """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
