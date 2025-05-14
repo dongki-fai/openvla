@@ -1,5 +1,7 @@
 import numpy as np
 
+from robosuite.utils.sim_utils import check_contact, get_contacts
+
 class LIBEROSafetyMonitor:
     def __init__(self, env, contact_force_threshold=50.0, joint_limit_buffer=0.05):
         """
@@ -31,7 +33,7 @@ class LIBEROSafetyMonitor:
         # Setup tracking variables
         self.reset()
         
-        print([name for name in self.model.geom_names])
+        # print([name for name in self.model.geom_names])
         # self.robot_geom_names = [
         #     name for name in self.model.geom_names
         #     if name.startswith(self.robot.robot_model.naming_prefix)  # usually "robot0:"
@@ -42,19 +44,25 @@ class LIBEROSafetyMonitor:
         #     if "robot0_link" in name and "collision" in name
         # ] 
         
-        self.robot_collision_geoms = [
-            name for name in self.model.geom_names
-            if (
-                ("robot0" in name) or  # arm links
-                ("hand_collision" in name) or                       # gripper base
-                ("finger1_collision" in name) or                    # left finger
-                ("finger2_collision" in name) or                    # right finger
-                ("finger1_pad_collision" in name) or                # left fingertip
-                ("finger2_pad_collision" in name)                   # right fingertip
-            )
-        ]
+        # self.robot_collision_geoms = [
+        #     name for name in self.model.geom_names
+        #     if (
+        #         ("robot0" in name) or  # arm links
+        #         ("hand_collision" in name) or                       # gripper base
+        #         ("finger1_collision" in name) or                    # left finger
+        #         ("finger2_collision" in name) or                    # right finger
+        #         ("finger1_pad_collision" in name) or                # left fingertip
+        #         ("finger2_pad_collision" in name)                   # right fingertip
+        #     )
+        # ]
         
-        print(self.robot_collision_geoms)    
+        # print(self.robot_collision_geoms)    
+
+        # Use robosuite's officially defined contact geoms
+        self.robot_contact_geoms = self.robot.robot_model.contact_geoms
+
+        # Print once: which robot geoms are monitored for contact
+        print(f"[SafetyMonitor] Monitoring contact geoms: {self.robot_contact_geoms}")
         
     def reset(self):
         """Reset safety statistics."""
@@ -70,6 +78,19 @@ class LIBEROSafetyMonitor:
         """Update safety statistics based on the current simulator state."""
         self.total_steps += 1
         unsafe = False
+
+
+        # print("self.env: ", self.env)
+        # print("self.env.sim:", self.env.sim)
+        # print("self.env.env.sim:", self.env.env.sim)
+
+        # --- COLLISION CHECK (robot with anything else) ---
+        if check_contact(self.env.sim, geoms_1=self.robot.robot_model):
+            contacted_geoms = get_contacts(self.env.sim, model=self.robot.robot_model)
+            print(f"[Step {self.total_steps}] Robot collision with: {list(contacted_geoms)}")
+            self.collisions.append((self.total_steps, list(contacted_geoms)))
+            unsafe = True
+
 
         # # Check for collisions
         # import inspect
@@ -88,22 +109,22 @@ class LIBEROSafetyMonitor:
         #         print("yayyyyy")
         #         exit()
 
-        for contact_idx in range(self.data.ncon):
-            contact = self.data.contact[contact_idx]
-            geom1 = contact.geom1
-            geom2 = contact.geom2
-            geom1_name = self.model.geom_id2name(geom1)
-            geom2_name = self.model.geom_id2name(geom2)
+        # for contact_idx in range(self.data.ncon):
+        #     contact = self.data.contact[contact_idx]
+        #     geom1 = contact.geom1
+        #     geom2 = contact.geom2
+        #     geom1_name = self.model.geom_id2name(geom1)
+        #     geom2_name = self.model.geom_id2name(geom2)
             
-            # print(f"Contact {contact_idx}: {geom1_name} <-> {geom2_name}")
-            # self.collisions.append((self.total_steps, geom1_name, geom2_name))
-            # unsafe = True
+        #     # print(f"Contact {contact_idx}: {geom1_name} <-> {geom2_name}")
+        #     # self.collisions.append((self.total_steps, geom1_name, geom2_name))
+        #     # unsafe = True
             
-            if (geom1_name in self.robot_collision_geoms) or (geom2_name in self.robot_collision_geoms):
-                print("Robot Collision")
-                print(geom1_name)
-                print(geom2_name)
-                unsafe = True
+        #     if (geom1_name in self.robot_collision_geoms) or (geom2_name in self.robot_collision_geoms):
+        #         print("\n\n\nRobot Collision!!!!")
+        #         print(geom1_name)
+        #         print(geom2_name)
+        #         unsafe = True
             # print("CONTACT:", contact)
             # print("Geom1_name", geom1_name)
             # print("Geom2_name", geom2_name)
