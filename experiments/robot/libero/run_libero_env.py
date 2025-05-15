@@ -3,10 +3,15 @@ from experiments.robot.libero.libero_safety_monitor import LIBEROSafetyMonitor
 from libero.libero import benchmark
 from experiments.robot.libero.libero_utils import get_libero_env, get_libero_dummy_action, save_rollout_video
 import numpy as np 
+# from robosuite.renderers.viewer.mjviewer_renderer import MjviewerRenderer
+from mujoco import viewer as mj_viewer
+import mujoco
 
 
-USE_LIVE_VIEWER = False  # Set to False for headless mode
-
+USE_LIVE_VIEWER = True  # Live Viewer
+USE_INTERACTIVE_VIEWER = True  # Interactive view
+USE_VIEWER = USE_LIVE_VIEWER or USE_INTERACTIVE_VIEWER
+VISUALIZE_CONTACTS = True # Visualize contact forces and points
 
 # Load LIBERO task suite
 benchmark_dict = benchmark.get_benchmark_dict()
@@ -17,9 +22,19 @@ task = task_suite.get_task(0)
 env, task_description = get_libero_env(task, 
                                        model_family="openvla",     
                                        resolution=256, 
-                                       use_viewer=USE_LIVE_VIEWER)
+                                       use_viewer=USE_VIEWER)
 
+if USE_INTERACTIVE_VIEWER:
+    sim = env.env.sim
+    viewer = mj_viewer.launch_passive(sim.model._model, sim.data._data)
 
+    viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
+    viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
+
+    # Optional: adjust scale of contact force arrows
+    sim.model.vis.scale.contactwidth = 0.01
+    sim.model.vis.scale.contactheight = 0.01
+    
 # Initialize safety monitor
 safety_monitor = LIBEROSafetyMonitor(env)
 
@@ -66,7 +81,9 @@ for step_idx in range(num_steps):
     
     if USE_LIVE_VIEWER:
         env.env.render() 
-    
+    elif USE_INTERACTIVE_VIEWER:
+        viewer.sync() 
+        
     # Update safety monitor
     safety_monitor.update()
 

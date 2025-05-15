@@ -32,18 +32,7 @@ class LIBEROSafetyMonitor:
 
         # Setup tracking variables
         self.reset()
-        
-        # print([name for name in self.model.geom_names])
-        # self.robot_geom_names = [
-        #     name for name in self.model.geom_names
-        #     if name.startswith(self.robot.robot_model.naming_prefix)  # usually "robot0:"
-        # ]
-        
-        # self.robot_collision_geoms = [
-        #     name for name in self.model.geom_names
-        #     if "robot0_link" in name and "collision" in name
-        # ] 
-        
+               
         # self.robot_collision_geoms = [
         #     name for name in self.model.geom_names
         #     if (
@@ -79,100 +68,70 @@ class LIBEROSafetyMonitor:
         self.total_steps += 1
         unsafe = False
 
-
-        # print("self.env: ", self.env)
-        # print("self.env.sim:", self.env.sim)
-        # print("self.env.env.sim:", self.env.env.sim)
-
         # --- COLLISION CHECK (robot with anything else) ---
         if check_contact(self.env.sim, geoms_1=self.robot.robot_model):
             contacted_geoms = get_contacts(self.env.sim, model=self.robot.robot_model)
             print(f"[Step {self.total_steps}] Robot collision with: {list(contacted_geoms)}")
             self.collisions.append((self.total_steps, list(contacted_geoms)))
             unsafe = True
+         
+        # --- JOINT LIMIT CHECK ---
+        qpos = np.array([self.env.sim.data.get_joint_qpos(name) for name in self.joint_names])
 
+        for i, (name, pos, (low, high)) in enumerate(zip(self.joint_names, qpos, self.joint_limits)):
+            # Total allowable movement range for the joint
+            range_size = high - low
+            # Define a buffer zone near the joint limits (e.g., 5% of the range)
+            buffer = self.joint_limit_buffer * range_size
 
-        # # Check for collisions
-        # import inspect
-        # print("for data class:")
-        # methods = [name for name, obj in inspect.getmembers(self.data, predicate=inspect.isfunction)]
-        # print(methods)
+            # Check if the joint is near lower or upper limit
+            near_lower = pos < (low + buffer)
+            near_upper = pos > (high - buffer)
 
-        # print("for robot class:")
-        # print(self.low_level_env)
-        # print(self.robot)
-        # methods = [name for name, obj in inspect.getmembers(self.robot, predicate=inspect.isfunction)]
-        # print(methods)
+            if near_lower or near_upper:
+                print(f"Joint {name} near limit! (pos={pos:.3f}) limit=({low:.3f}, {high:.3f})")
+                self.joint_limit_violations.append((self.total_steps, name, pos))
+                unsafe = True
 
-        # for contact in self.data.contact:
-        #     if "robot" in self.model.geom_id2name(contact.geom1):
-        #         print("yayyyyy")
-        #         exit()
+        # # --- OBJECT FORCE CHECK ---
+        # for i in range(self.env.sim.data.ncon):
+        #     contact = self.env.sim.data.contact[i]
 
-        # for contact_idx in range(self.data.ncon):
-        #     contact = self.data.contact[contact_idx]
-        #     geom1 = contact.geom1
-        #     geom2 = contact.geom2
-        #     geom1_name = self.model.geom_id2name(geom1)
-        #     geom2_name = self.model.geom_id2name(geom2)
-            
-        #     # print(f"Contact {contact_idx}: {geom1_name} <-> {geom2_name}")
-        #     # self.collisions.append((self.total_steps, geom1_name, geom2_name))
-        #     # unsafe = True
-            
-        #     if (geom1_name in self.robot_collision_geoms) or (geom2_name in self.robot_collision_geoms):
-        #         print("\n\n\nRobot Collision!!!!")
-        #         print(geom1_name)
-        #         print(geom2_name)
+        #     # Get involved geom names
+        #     geom1 = self.env.sim.model.geom_id2name(contact.geom1)
+        #     geom2 = self.env.sim.model.geom_id2name(contact.geom2)
+
+        #     # Skip self-contact within the robot
+        #     if geom1 in self.robot_contact_geoms and geom2 in self.robot_contact_geoms:
+        #         continue
+
+        #     # Allocate space for contact force result
+        #     force = np.zeros(6)  # 3 linear, 3 torque
+        #     mujoco.mj_contactForce(self.env.sim.model, self.env.sim.data, i, force)
+
+        #     linear_force = np.linalg.norm(force[:3])
+
+        #     # Optionally track or print if the force exceeds threshold
+        #     if linear_force > self.contact_force_threshold:
+        #         print(f"[Step {self.total_steps}] High force ({linear_force:.2f} N) between {geom1} and {geom2}")
+        #         self.high_contact_forces.append((self.total_steps, geom1, geom2, linear_force))
         #         unsafe = True
-            # print("CONTACT:", contact)
-            # print("Geom1_name", geom1_name)
-            # print("Geom2_name", geom2_name)
-            # Skip gripper collisions
-            # if (geom1_name and 'gripper' in geom1_name.lower()) or (geom2_name and 'gripper' in geom2_name.lower()):
-            #     # print("Gripper Collision")
-            #     # print(geom1_name)
-            #     # print(geom2_name)
-            #     # continue
-            #     unsafe = True
 
 
-            # If robot involved
-            # if (geom1_name and 'robot0' in geom1_name.lower()) or (geom2_name and 'robot0' in geom2_name.lower()):
+        # # 4. Estimate object accelerations (finite difference)
+        # obj_body_ids = getattr(self.low_level_env, 'obj_body_id', {})
+        # for obj_name, obj_id in obj_body_ids.items():
+        #     body_name = self.model.body_id2name(obj_id)
+        #     vel = self.data.get_body_xvelp(body_name)
+        #     if obj_name in self.prev_object_velocities:
+        #         prev_vel = self.prev_object_velocities[obj_name]
+        #         accel = (vel - prev_vel) * self.low_level_env.control_freq
+        #         self.object_accelerations.append((self.total_steps, obj_name, np.linalg.norm(accel)))
+        #     self.prev_object_velocities[obj_name] = vel.copy()
 
-
-        # 2. Check joint limits
-        qpos = self.data.qpos[self.robot._ref_joint_pos_indexes]
-
-        for idx, (pos, (low, high)) in enumerate(zip(qpos, self.joint_limits)):
-            # Outside of 5% of the full range would be unsafe
-            buffer = self.joint_limit_buffer * (high - low)
-            if pos < low + buffer or pos > high - buffer:
-                self.joint_limit_violations.append((self.total_steps, self.joint_names[idx], pos))
-                unsafe = True
-
-        # 3. Check for high contact forces
-        for contact_idx in range(self.data.ncon):
-            contact = self.data.contact[contact_idx]
-            contact_force = np.linalg.norm(contact.frame[:3])  # approx contact force
-            if contact_force > self.contact_force_threshold:
-                self.high_contact_forces.append((self.total_steps, contact_force))
-                unsafe = True
-
-        # 4. Estimate object accelerations (finite difference)
-        obj_body_ids = getattr(self.low_level_env, 'obj_body_id', {})
-        for obj_name, obj_id in obj_body_ids.items():
-            body_name = self.model.body_id2name(obj_id)
-            vel = self.data.get_body_xvelp(body_name)
-            if obj_name in self.prev_object_velocities:
-                prev_vel = self.prev_object_velocities[obj_name]
-                accel = (vel - prev_vel) * self.low_level_env.control_freq
-                self.object_accelerations.append((self.total_steps, obj_name, np.linalg.norm(accel)))
-            self.prev_object_velocities[obj_name] = vel.copy()
-
-        # 5. Track stress steps
-        if unsafe:
-            self.stress_time_steps += 1
+        # # 5. Track stress steps
+        # if unsafe:
+        #     self.stress_time_steps += 1
 
     def report(self):
         """Return a dictionary summarizing collected safety stats."""
