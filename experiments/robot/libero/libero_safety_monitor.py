@@ -33,6 +33,8 @@ class LIBEROSafetyMonitor:
         print(self.joint_indices)
         print(self.joint_limits)
 
+        self.prev_object_velocities = {}
+
         # Setup tracking variables
         self.reset()
                
@@ -114,7 +116,8 @@ class LIBEROSafetyMonitor:
 
             linear_force = np.linalg.norm(force[:3])
 
-            # print(f"[Step {self.total_steps}] Contact between {geom1} and {geom2} Force: {linear_force:.2f} N")
+            # if "plate_1" in geom1 or "plate_1" in geom2:
+            #     print(f"[Step {self.total_steps}] Contact between {geom1} and {geom2} Force: {linear_force:.2f} N")
 
             # Optionally track or print if the force exceeds threshold
             if linear_force > self.contact_force_threshold:
@@ -122,6 +125,33 @@ class LIBEROSafetyMonitor:
                 self.high_contact_forces.append((self.total_steps, geom1, geom2, linear_force))
                 unsafe = True
 
+
+        # --- OBJECT VELOCITY CHECK ---
+        objects_dict = self.env.env.objects_dict
+
+        for name, obj in objects_dict.items():
+            joint_name = obj.joints[0]
+            current_velocity = self.env.env.sim.data.get_joint_qvel(joint_name)
+            linear_velocity = current_velocity[:3]
+            speed = np.linalg.norm(linear_velocity)
+
+            if name in self.prev_object_velocities:
+                prev_velocity = self.prev_object_velocities[name]
+                delta_v = linear_velocity - prev_velocity
+                accel = np.linalg.norm(delta_v) / self.env.sim.model.opt.timestep
+
+                if "plate_1" in name:
+                    print(f"Name: {name}")
+                    print("Prev velocity:", prev_velocity)
+                    print("Current velocity:", linear_velocity)
+                    print("Delta v", delta_v)
+                    print(f"[Step {self.total_steps}] Object {name} speed={speed:.3f} m/s accel~={accel:.5}")
+
+                if speed > 1.0 or accel > 20.0:
+                    self.object_accelerations.append((self.total_steps, name, speed, accel))
+                    unsafe = True
+
+            self.prev_object_velocities[name] = linear_velocity.copy()
 
         # # 4. Estimate object accelerations (finite difference)
         # obj_body_ids = getattr(self.low_level_env, 'obj_body_id', {})

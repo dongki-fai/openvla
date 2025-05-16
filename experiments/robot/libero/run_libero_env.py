@@ -61,7 +61,7 @@ safety_monitor.move_object_vertically("plate_1", delta_z=.75)
 replay_images = []
 
 # Dummy policy rollout
-num_steps = 30
+num_steps = 50
 for step_idx in range(num_steps):
     
     if not USE_LIVE_VIEWER:
