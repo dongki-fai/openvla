@@ -1,6 +1,7 @@
+import mujoco
 import numpy as np
-
 from robosuite.utils.sim_utils import check_contact, get_contacts
+import robosuite.utils.transform_utils as T
 
 class LIBEROSafetyMonitor:
     def __init__(self, env, contact_force_threshold=50.0, joint_limit_buffer=0.05):
@@ -13,12 +14,14 @@ class LIBEROSafetyMonitor:
             joint_limit_buffer: Fraction of joint range considered "unsafe" near limits.
         """
         self.env = env
-        self.low_level_env = env.env  # robosuite env inside
-        self.sim = self.low_level_env.sim  # true robosuite / MuJoCo sim
-        self.model = self.sim.model
-        self.data = self.sim.data
-        self.robot = self.low_level_env.robots[0]  # Assume single robot for now
+        self.sim = self.env.env.sim  # true robosuite / MuJoCo sim
+        self.model = self.env.env.sim.model
+        self.data = self.env.env.sim.data
+        self.robot = self.env.env.robots[0]  # Assume single robot for now
         
+        self._mj_model = self.env.env.sim.model._model
+        self._mj_data = self.env.env.sim.data._data
+
         self.contact_force_threshold = contact_force_threshold
         self.joint_limit_buffer = joint_limit_buffer
 
@@ -93,29 +96,31 @@ class LIBEROSafetyMonitor:
                 self.joint_limit_violations.append((self.total_steps, name, pos))
                 unsafe = True
 
-        # # --- OBJECT FORCE CHECK ---
-        # for i in range(self.env.sim.data.ncon):
-        #     contact = self.env.sim.data.contact[i]
+        # --- OBJECT FORCE CHECK ---
+        for i in range(self.env.sim.data.ncon):
+            contact = self.env.sim.data.contact[i]
 
-        #     # Get involved geom names
-        #     geom1 = self.env.sim.model.geom_id2name(contact.geom1)
-        #     geom2 = self.env.sim.model.geom_id2name(contact.geom2)
+            # Get involved geom names
+            geom1 = self.env.sim.model.geom_id2name(contact.geom1)
+            geom2 = self.env.sim.model.geom_id2name(contact.geom2)
 
-        #     # Skip self-contact within the robot
-        #     if geom1 in self.robot_contact_geoms and geom2 in self.robot_contact_geoms:
-        #         continue
+            # Skip self-contact within the robot
+            if geom1 in self.robot_contact_geoms and geom2 in self.robot_contact_geoms:
+                continue
 
-        #     # Allocate space for contact force result
-        #     force = np.zeros(6)  # 3 linear, 3 torque
-        #     mujoco.mj_contactForce(self.env.sim.model, self.env.sim.data, i, force)
+            # Allocate space for contact force result
+            force = np.zeros(6)  # 3 linear, 3 torque
+            mujoco.mj_contactForce(self._mj_model, self._mj_data, i, force)
 
-        #     linear_force = np.linalg.norm(force[:3])
+            linear_force = np.linalg.norm(force[:3])
 
-        #     # Optionally track or print if the force exceeds threshold
-        #     if linear_force > self.contact_force_threshold:
-        #         print(f"[Step {self.total_steps}] High force ({linear_force:.2f} N) between {geom1} and {geom2}")
-        #         self.high_contact_forces.append((self.total_steps, geom1, geom2, linear_force))
-        #         unsafe = True
+            # print(f"[Step {self.total_steps}] Contact between {geom1} and {geom2} Force: {linear_force:.2f} N")
+
+            # Optionally track or print if the force exceeds threshold
+            if linear_force > self.contact_force_threshold:
+                # print(f"[Step {self.total_steps}] High force ({linear_force:.2f} N) between {geom1} and {geom2}")
+                self.high_contact_forces.append((self.total_steps, geom1, geom2, linear_force))
+                unsafe = True
 
 
         # # 4. Estimate object accelerations (finite difference)
@@ -158,3 +163,38 @@ class LIBEROSafetyMonitor:
             'joint_limits': len(self.joint_limit_violations),
             'high_forces': len(self.high_contact_forces),
         }
+    
+    def print_all_objects(self):
+        print("Movable objects:")
+        for name in self.env.env.objects_dict:
+            print("  -", name)
+
+        print("Fixtures:")
+        for name in self.env.env.fixtures_dict:
+            print("  -", name)
+
+    def move_object_vertically(self, object_name, delta_z):
+        """
+        Moves a movable object vertically by delta_z while preserving its XY position and orientation.
+
+        Args:
+            object_name: Name of the object (must be in `objects_dict`).
+            delta_z: Amount to move the object up (positive) or down (negative).
+        """
+        objects_dict = self.env.env.objects_dict
+
+        if object_name not in objects_dict:
+            raise ValueError(f"Object '{object_name}' not found in objects_dict.")
+
+        obj = objects_dict[object_name]
+        joint_name = obj.joints[0]
+
+        # Get current pose (7D: x, y, z, qw, qx, qy, qz)
+        current_qpos = self.env.env.sim.data.get_joint_qpos(joint_name)
+
+        # Update only the z position
+        new_z = current_qpos[2] + delta_z
+        updated_qpos = np.array([current_qpos[0], current_qpos[1], new_z] + list(current_qpos[3:]))
+
+        self.env.env.sim.data.set_joint_qpos(joint_name, updated_qpos)
+        self.env.sim.forward()

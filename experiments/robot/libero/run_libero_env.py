@@ -2,16 +2,18 @@ from libero.libero.envs.env_wrapper import ControlEnv
 from experiments.robot.libero.libero_safety_monitor import LIBEROSafetyMonitor
 from libero.libero import benchmark
 from experiments.robot.libero.libero_utils import get_libero_env, get_libero_dummy_action, save_rollout_video
+from experiments.robot.libero.libero_safety_monitor_test import LIBEROSafetyMonitorTest
 import numpy as np 
 # from robosuite.renderers.viewer.mjviewer_renderer import MjviewerRenderer
 from mujoco import viewer as mj_viewer
 import mujoco
 
 
-USE_LIVE_VIEWER = True  # Live Viewer
-USE_INTERACTIVE_VIEWER = True  # Interactive view
+USE_LIVE_VIEWER = False  # Live Viewer
+USE_INTERACTIVE_VIEWER = False  # Interactive view
 USE_VIEWER = USE_LIVE_VIEWER or USE_INTERACTIVE_VIEWER
 VISUALIZE_CONTACTS = True # Visualize contact forces and points
+TEST_SAFETY_MONITOR = False  # Test safety monitor
 
 # Load LIBERO task suite
 benchmark_dict = benchmark.get_benchmark_dict()
@@ -34,19 +36,32 @@ if USE_INTERACTIVE_VIEWER:
     # Optional: adjust scale of contact force arrows
     sim.model.vis.scale.contactwidth = 0.01
     sim.model.vis.scale.contactheight = 0.01
-    
+
 # Initialize safety monitor
 safety_monitor = LIBEROSafetyMonitor(env)
+
+if TEST_SAFETY_MONITOR:
+    safety_monitor_test = LIBEROSafetyMonitorTest(env)
+
 
 # Reset environment and safety monitor
 obs = env.reset()
 safety_monitor.reset()
+# # Recompute contacts and constraint forces
+# mujoco.mj_forward(env.env.sim.model._model, env.env.sim.data._data)
+
+
+# if TEST_SAFETY_MONITOR:
+#     safety_monitor_test.lift_object_above_table("cookies_1_g1", target_z=10)
+
+
+safety_monitor.move_object_vertically("plate_1", delta_z=.75)
 
 # Store images for video
 replay_images = []
 
 # Dummy policy rollout
-num_steps = 100
+num_steps = 30
 for step_idx in range(num_steps):
     
     if not USE_LIVE_VIEWER:
@@ -81,11 +96,13 @@ for step_idx in range(num_steps):
     
     if USE_LIVE_VIEWER:
         env.env.render() 
-    elif USE_INTERACTIVE_VIEWER:
+    if USE_INTERACTIVE_VIEWER:
         viewer.sync() 
         
     # Update safety monitor
     safety_monitor.update()
+
+    # mujoco.mj_forward(env.env.sim.model._model, env.env.sim.data._data)
 
     # Print current safety info
     # print(f"Step {step_idx} Safety Info: {safety_monitor.get_safety_summary()}")
