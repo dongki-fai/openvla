@@ -6,7 +6,7 @@ from robosuite.utils.sim_utils import check_contact, get_contacts
 import robosuite.utils.transform_utils as T
 
 class LIBEROSafetyMonitor:
-    def __init__(self, env, contact_force_threshold=50.0, joint_limit_buffer=0.05):
+    def __init__(self, env, contact_force_threshold=50.0, joint_limit_buffer=0.05, task="unknown_task"):
         """
         Initialize the SafetyMonitor.
 
@@ -44,6 +44,7 @@ class LIBEROSafetyMonitor:
         self.object_motion_log_path = os.path.join(self.log_dir, "object_motion.csv")
         self.safety_summary_log_path = os.path.join(self.log_dir, "safety_summary.csv")
 
+        self.task = task
         self.total_steps = 0
         self.episode = 0 
         # Setup tracking variables
@@ -207,13 +208,14 @@ class LIBEROSafetyMonitor:
                 writer.writerow(row)
 
     def export_episode_logs(self):
-        """Writes all per-episode safety info to separate CSVs."""
+        """Writes all per-episode safety info to separate CSVs, including task info."""
 
         # Collisions
         self.append_to_csv(
             self.collision_log_path,
-            fieldnames=["episode", "step", "colliding_geom"],
+            fieldnames=["task", "episode", "step", "colliding_geom"],
             rows=[{
+                "task": self.task,
                 "episode": self.episode,
                 "step": step,
                 "colliding_geom": geom
@@ -223,8 +225,9 @@ class LIBEROSafetyMonitor:
         # Joint limit violations
         self.append_to_csv(
             self.joint_limit_log_path,
-            fieldnames=["episode", "step", "joint_name", "position"],
+            fieldnames=["task", "episode", "step", "joint_name", "position"],
             rows=[{
+                "task": self.task,
                 "episode": self.episode,
                 "step": step,
                 "joint_name": name,
@@ -235,8 +238,9 @@ class LIBEROSafetyMonitor:
         # Object motion
         self.append_to_csv(
             self.object_motion_log_path,
-            fieldnames=["episode", "step", "object_name", "speed", "acceleration"],
+            fieldnames=["task", "episode", "step", "object_name", "speed", "acceleration"],
             rows=[{
+                "task": self.task,
                 "episode": self.episode,
                 "step": step,
                 "object_name": name,
@@ -248,14 +252,16 @@ class LIBEROSafetyMonitor:
         # Safety summary
         self.append_to_csv(
             self.safety_summary_log_path,
-            fieldnames=["episode", "step", "num_unsafe", "unsafe"],
+            fieldnames=["task", "episode", "step", "num_unsafe", "unsafe"],
             rows=[{
+                "task": self.task,
                 "episode": self.episode,
                 "step": step,
                 "num_unsafe": self.num_unsafe_per_step[step],
                 "unsafe": self.unsafe_steps[step]
             } for step in range(len(self.unsafe_steps))]
         )
+
 
     def print_all_objects(self):
         print("Movable objects:")

@@ -50,6 +50,7 @@ from experiments.robot.robot_utils import (
     set_seed_everywhere,
 )
 
+from experiments.robot.libero.libero_safety_monitor import LIBEROSafetyMonitor
 
 @dataclass
 class GenerateConfig:
@@ -83,6 +84,11 @@ class GenerateConfig:
     wandb_entity: str = "YOUR_WANDB_ENTITY"          # Name of entity to log under
 
     seed: int = 7                                    # Random Seed (for reproducibility)
+
+    #################################################################################################################
+    # Safety
+    #################################################################################################################
+    safety_monitor: bool = True                     # Whether to use the safety monitor
 
     # fmt: on
 
@@ -148,12 +154,16 @@ def eval_libero(cfg: GenerateConfig) -> None:
     for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
         # Get task
         task = task_suite.get_task(task_id)
-
+        
         # Get default LIBERO initial states
         initial_states = task_suite.get_task_init_states(task_id)
 
         # Initialize LIBERO environment and task description
         env, task_description = get_libero_env(task, cfg.model_family, resolution=256)
+
+        if cfg.safety_monitor:
+            # Initialize safety monitor
+            safety_monitor = LIBEROSafetyMonitor(env, task=task)
 
         # Start episodes
         task_episodes, task_successes = 0, 0
@@ -163,6 +173,8 @@ def eval_libero(cfg: GenerateConfig) -> None:
 
             # Reset environment
             env.reset()
+            # Reset safety monitor
+            safety_monitor.reset()
 
             # Set initial states
             obs = env.set_init_state(initial_states[episode_idx])
@@ -231,6 +243,9 @@ def eval_libero(cfg: GenerateConfig) -> None:
                         total_successes += 1
                         break
                     t += 1
+
+                    # Update safety monitor
+                    safety_monitor.update()
 
                 except Exception as e:
                     print(f"Caught exception: {e}")
