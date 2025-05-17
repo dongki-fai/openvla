@@ -50,18 +50,17 @@ if TEST_SAFETY_MONITOR:
 #     safety_monitor_test.lift_object_above_table("cookies_1_g1", target_z=10)
 
 
-# safety_monitor.move_object_vertically("plate_1", delta_z=.75)
-
-
 # Dummy policy rollout
-num_steps_per_episode = 100
-num_episodes = 5
+num_steps_per_episode = 60
+num_episodes = 3
 
 
 for episode_idx in range(num_episodes):
     # Reset environment and safety monitor
     obs = env.reset()
     safety_monitor.reset()
+
+    safety_monitor.move_object_vertically("plate_1", delta_z=.75)
 
     # Store images for video
     replay_images = []

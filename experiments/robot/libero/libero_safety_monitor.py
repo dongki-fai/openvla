@@ -1,4 +1,5 @@
 import os
+import csv
 import mujoco
 import numpy as np
 from robosuite.utils.sim_utils import check_contact, get_contacts
@@ -36,12 +37,14 @@ class LIBEROSafetyMonitor:
 
         self.prev_object_velocities = {}
 
+        self.log_dir = "rollouts"
         # Data logging paths
         self.collision_log_path = os.path.join(self.log_dir, "collisions.csv")
         self.joint_limit_log_path = os.path.join(self.log_dir, "joint_limits.csv")
         self.object_motion_log_path = os.path.join(self.log_dir, "object_motion.csv")
         self.safety_summary_log_path = os.path.join(self.log_dir, "safety_summary.csv")
 
+        self.total_steps = 0
         self.episode = 0 
         # Setup tracking variables
         self.reset()
