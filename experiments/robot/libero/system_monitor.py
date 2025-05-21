@@ -6,7 +6,7 @@ import torch
 class SystemMonitor:
     def __init__(self, log_dir="rollouts", task="unknown_task"):
         self.log_dir = log_dir
-        self.latency_log_path = os.path.join(self.log_dir, "system_metrics.csv")
+        self.log_path = os.path.join(self.log_dir, "system_metrics.csv")
         self.task = task
         self.episode = 0
         self.step = 0
@@ -21,27 +21,29 @@ class SystemMonitor:
         self.entries = []
 
     def start_timing(self):
+        torch.cuda.reset_peak_memory_stats()
         self._start_time = time.time()
 
     def stop_and_log(self):
         latency = time.time() - self._start_time
         vram_bytes = torch.cuda.max_memory_allocated()
-        vram_gb = vram_bytes / 1e9 
+        vram_gb = vram_bytes / (1024 ** 3)
 
-        self.entries.append({
+        row = {
             "task": self.task,
             "episode": self.episode,
             "step": self.step,
-            "latency": latency,
+            "latency_s": latency,
             "vram_gb": vram_gb,
-        })
+        }
+
+        self.append_to_csv(row)
         self.step += 1
 
-    def export(self):
-        write_header = not os.path.exists(self.latency_log_path)
-        with open(self.latency_log_path, "a", newline="") as f:
+    def append_to_csv(self, row):
+        file_exists = os.path.exists(self.log_path)
+        with open(self.log_path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["task", "episode", "step", "latency_s", "vram_gb"])
-            if write_header:
+            if not file_exists or os.stat(self.log_path).st_size == 0:
                 writer.writeheader()
-            for row in self.entries:
-                writer.writerow(row)
+            writer.writerow(row)
