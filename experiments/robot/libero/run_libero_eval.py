@@ -51,6 +51,7 @@ from experiments.robot.robot_utils import (
 )
 
 from experiments.robot.libero.libero_safety_monitor import LIBEROSafetyMonitor
+from experiments.robot.libero.system_monitor import SystemMonitor
 
 @dataclass
 class GenerateConfig:
@@ -89,6 +90,7 @@ class GenerateConfig:
     # Safety
     #################################################################################################################
     safety_monitor: bool = True                     # Whether to use the safety monitor
+    system_monitor: bool = True                     # Whether to use the system monitor
 
     # fmt: on
 
@@ -165,6 +167,9 @@ def eval_libero(cfg: GenerateConfig) -> None:
             # Initialize safety monitor
             safety_monitor = LIBEROSafetyMonitor(env, task=task)
 
+        if cfg.system_monitor:
+            system_monitor = SystemMonitor(task=task)
+
         # Start episodes
         task_episodes, task_successes = 0, 0
         for episode_idx in tqdm.tqdm(range(cfg.num_trials_per_task)):
@@ -173,8 +178,13 @@ def eval_libero(cfg: GenerateConfig) -> None:
 
             # Reset environment
             env.reset()
-            # Reset safety monitor
-            safety_monitor.reset()
+
+            if cfg.safety_monitor:
+                # Reset safety monitor
+                safety_monitor.reset()
+            if cfg.system_monitor:
+                # Reset system monitor
+                system_monitor.reset()
 
             # Set initial states
             obs = env.set_init_state(initial_states[episode_idx])
@@ -219,6 +229,9 @@ def eval_libero(cfg: GenerateConfig) -> None:
                         ),
                     }
 
+                    if cfg.system_monitor:
+                        system_monitor.start_timing()
+
                     # Query model to get action
                     action = get_action(
                         cfg,
@@ -227,6 +240,9 @@ def eval_libero(cfg: GenerateConfig) -> None:
                         task_description,
                         processor=processor,
                     )
+
+                    if cfg.system_monitor:
+                        system_monitor.stop_and_log()
 
                     # Normalize gripper action [0,1] -> [-1,+1] because the environment expects the latter
                     action = normalize_gripper_action(action, binarize=True)
@@ -244,8 +260,9 @@ def eval_libero(cfg: GenerateConfig) -> None:
                         break
                     t += 1
 
-                    # Update safety monitor
-                    safety_monitor.update()
+                    if cfg.safety_monitor:
+                        # Update safety monitor
+                        safety_monitor.update()
 
                 except Exception as e:
                     print(f"Caught exception: {e}")
