@@ -21,7 +21,7 @@ def save_mp4_video(frames, output_path, fps=30):
     print(f"[Success] Saved video to: {output_path}")
 
 # === Setup ===
-tfrecord_path = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0/libero_spatial-train.tfrecord-00000-of-00016"
+tfrecord_path = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0/libero_spatial-train.tfrecord-00007-of-00016"
 output_dir = "visualize_data"
 os.makedirs(output_dir, exist_ok=True)
 log_file_path = os.path.join(output_dir, "episode_language_log.txt")
@@ -33,7 +33,7 @@ total_episodes = len(raw_dataset)
 print(f"Total episodes in file: {total_episodes}")
 
 # === Sample 10 random episode indices ===
-sampled_indices = random.sample(range(total_episodes), min(10, total_episodes))
+sampled_indices = random.sample(range(total_episodes), min(25, total_episodes))
 
 # === Process sampled episodes ===
 for episode_idx in sampled_indices:
