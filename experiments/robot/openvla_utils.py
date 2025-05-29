@@ -14,6 +14,9 @@ from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
 
+from deepspeed.inference.engine import InferenceEngine 
+
+
 # Initialize important constants and pretty-printing mode in NumPy.
 ACTION_DIM = 7
 DATE = time.strftime("%Y_%m_%d")
@@ -42,7 +45,7 @@ def get_vla(cfg):
 
     vla = AutoModelForVision2Seq.from_pretrained(
         cfg.pretrained_checkpoint,
-        attn_implementation="flash_attention_2",
+        attn_implementation="eager", #"flash_attention_2", # 
         torch_dtype=torch.bfloat16,
         load_in_8bit=cfg.load_in_8bit,
         load_in_4bit=cfg.load_in_4bit,
@@ -165,6 +168,11 @@ def get_vla_action(vla, processor, base_vla_name, obs, task_label, unnorm_key, c
     # Process inputs.
     inputs = processor(prompt, image).to(DEVICE, dtype=torch.bfloat16)
 
-    # Get action.
-    action = vla.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
+    # <class 'deepspeed.inference.engine.InferenceEngine'>
+    if isinstance(vla, InferenceEngine):
+        # engine deepspeed model
+        action = vla.module.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
+    else:
+        # normal vla model
+        action = vla.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
     return action

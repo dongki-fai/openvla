@@ -1,0 +1,241 @@
+from llmcompressor.modifiers.pruning import MagnitudePruningModifier
+from llmcompressor import oneshot
+
+from experiments.robot.robot_utils import get_model
+from experiments.robot.openvla_utils import get_processor
+
+from llmcompressor.modifiers.pruning import WandaPruningModifier
+
+import torch
+
+from transformers import AutoModelForCausalLM
+from experiments.robot.robot_utils import get_model
+from transformers import AutoProcessor
+from experiments.robot.openvla_utils import get_processor
+
+import torch
+from PIL import Image
+import io
+import os
+import random
+import tensorflow as tf
+from transformers import AutoModelForCausalLM
+import pdb
+if not hasattr(torch, "OutOfMemoryError"):
+    class _OOM(RuntimeError): pass
+    torch.OutOfMemoryError = _OOM
+
+from datasets import IterableDataset, DatasetDict, Features, Sequence, Value, Array2D, DatasetInfo
+from datasets import Dataset
+from llmcompressor import oneshot
+from llmcompressor.modifiers.quantization import GPTQModifier
+
+if not hasattr(torch, "OutOfMemoryError"):
+    class _OOM(RuntimeError): pass
+    torch.OutOfMemoryError = _OOM
+
+# Setup dummy config with checkpoint
+class DummyConfig:
+    model_family = "openvla"
+    pretrained_checkpoint = "/workspace/models/openvla-7b-finetuned-libero-spatial"
+    load_in_8bit = False
+    load_in_4bit = False
+
+
+def build_model_inputs(model, processor, image, instruction):
+    """
+    Returns the kwargs dict you would normally pass directly to
+    `OpenVLAForActionPrediction.forward(...)`.
+    """
+    inputs = processor(images=image, text=instruction, return_tensors="pt")
+    pixel_values   = inputs["pixel_values"].to(model.device, dtype=torch.bfloat16)
+    input_ids      = inputs["input_ids"].to(model.device)
+    attention_mask = inputs["attention_mask"].to(model.device)
+
+    return {
+        "pixel_values":   pixel_values.squeeze(0),   # (3,224,224)  bf16
+        "input_ids":      input_ids.squeeze(0),      # (T,)
+        "attention_mask": attention_mask.squeeze(0)  # (T,)
+    }
+
+def decode_jpeg(jpeg_bytes):
+    """Decode JPEG bytes into RGB image as np.uint8 array."""
+    image = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+    return image
+
+
+def build_calibration_dataset_from_examples(
+    tfrecord_paths,
+    model,
+    processor,
+    num_samples=16,
+    seed=42,
+):
+    calibration_set = []
+    random.seed(seed)
+
+    for tfrecord_path in tfrecord_paths:
+        print(f"[*] Scanning: {tfrecord_path}")
+        dataset = tf.data.TFRecordDataset(tfrecord_path)
+
+        for record in dataset:
+            if len(calibration_set) >= num_samples:
+                break
+
+            try:
+                example = tf.train.Example()
+                example.ParseFromString(record.numpy())
+
+                instruction = example.features.feature["steps/language_instruction"].bytes_list.value[0].decode()
+                img_bytes = example.features.feature["steps/observation/image"].bytes_list.value[0]
+                image = decode_jpeg(img_bytes)
+
+                result = build_model_inputs(model, processor, image, instruction)
+                calibration_set.append(result)
+
+            except Exception as e:
+                print(f"[!] Skipping record due to error: {e}")
+                continue
+
+        if len(calibration_set) >= num_samples:
+            break
+
+    print(f"[✓] Collected {len(calibration_set)} calibration examples.")
+    return calibration_set
+
+cfg = DummyConfig()
+
+# Load the full OpenVLA model
+print("[*] Loading full OpenVLA model...")
+model = get_model(cfg)
+
+model = model.float()  # ensure model is in float32 for calibration
+
+# Get the processor
+processor = get_processor(cfg)
+
+
+tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
+tfrecord_paths = [
+    os.path.join(tfrecord_dir, f)
+    for f in sorted(os.listdir(tfrecord_dir))
+    if ".tfrecord" in f
+]
+
+calib_data = build_calibration_dataset_from_examples(
+    tfrecord_paths=tfrecord_paths,
+    model=model,
+    processor=processor,
+    num_samples=40,
+)
+
+print("Number of Calibration Samples", len(calib_data))
+
+
+calib_list = []
+for s in calib_data:
+    calib_list.append({
+        "pixel_values"  : s["pixel_values"].cpu(),      # bf16
+        "input_ids"     : s["input_ids"].cpu(),         # int64
+        "attention_mask": s["attention_mask"].cpu(),    # int64
+    })
+
+ds = Dataset.from_list(calib_list).with_format("torch")
+print(len(ds), ds.column_names)        # sanity-check
+
+# ---- turn it into a HF Dataset -------------------------------------------
+ds = Dataset.from_list(calib_list)              # keeps torch tensors as-is
+ds = ds.with_format("torch")                    # no dtype conversion now
+
+
+pruner = WandaPruningModifier(
+    targets="Linear",
+    sparsity=0.50,
+    mask_structure="2:4",     # recognised by Wanda path
+)
+
+oneshot(model=model,
+        recipe=pruner,
+        dataset=ds,
+        output_dir="openvla-7b-pruned-2_4-oneshot-not-compressed",)
+
+
+save_dir = "openvla-7b-pruned-2_4-not-compressed"       # “ct” = compressed-tensor
+
+total_params = 0
+zero_params  = 0
+for module in model.modules():
+    if isinstance(module, torch.nn.Linear):
+        W = module.weight.data
+        total_params += W.numel()
+        zero_params  += (W == 0).sum().item()
+print(f"Global zero fraction: {zero_params/total_params:.3%}")
+
+
+# save in compressed form
+model.save_pretrained(
+    save_dir,
+    safe_serialization=True,          # safetensors
+    # save_compressed=True,             # write bit-masks instead of dense tensors
+    # compression_scheme="sparse-24-bitmask",   # this string matters!
+    disable_sparse_compression=True,
+)
+
+processor.save_pretrained(save_dir)
+print(f"[✓] Model and processor saved to {save_dir}")
+
+
+
+# ###############################################
+
+# ## Sanity Check Visualization of Pruned Weights
+
+# ################################################
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from matplotlib.colors import ListedColormap, BoundaryNorm
+
+# # pick a layer, e.g. the first Linear in your language model
+# # layer = model.language_model.model.layers[0].self_attn.q_proj 
+# # layer = model.vision_backbone.featurizer.blocks[0].mlp.fc1
+# layer = model.vision_backbone.featurizer.blocks[0].attn.qkv
+
+# W = layer.weight.data.cpu().numpy()   # shape (out_dim, in_dim)
+
+# # make a binary mask: 0 where W==0, 1 everywhere else
+# binary = (W != 0).astype(int)
+
+# # define a 2-color map: zeros in light gray, non-zeros in navy
+# cmap = ListedColormap(["#FFFFFF", "#F15A29"])
+# norm = BoundaryNorm([-0.5, 0.5, 1.5], cmap.N)  # boundaries at -0.5→0.5→1.5
+
+# plt.figure(figsize=(8, 6))
+# plt.imshow(binary, aspect="auto", cmap=cmap, norm=norm)
+# plt.colorbar(ticks=[0, 1],label="Zero vs Non-Zero",format=plt.FuncFormatter(lambda val, loc: "zero" if val == 0 else "non-zero"))
+# plt.title("Binary mask of Vision Backbone attn.qkv weight (layer 0)")
+# plt.xlabel("Input dimension")
+# plt.ylabel("Output dimension")
+
+# # save high-res copy before showing
+# plt.savefig("vision_backbone_attn_qkv.png", dpi=300, bbox_inches="tight")
+
+
+# # --------- Zoomed In View of Matrix
+
+# # slice the first 100×100
+# W_small = W[:20, :20]
+
+# # make a binary mask: 0 where W_small==0, 1 where !=0
+# binary_small = (W_small != 0).astype(int)
+
+# plt.figure(figsize=(6, 6))
+# plt.imshow(binary_small, aspect="equal", cmap=cmap, norm=norm)
+# plt.colorbar(ticks=[0, 1],label="Zero vs Non-Zero",format=plt.FuncFormatter(lambda val, loc: "zero" if val == 0 else "non-zero"))
+# plt.title("Binary mask of Vision Backbone attn.qkv weight")
+# plt.xlabel("Input dim (0–19)")
+# plt.ylabel("Output dim (0–19)")
+
+# # save hi-res
+# plt.savefig("vision_backbone_attn_qkv_20x20.png", dpi=300, bbox_inches="tight")
+
+pdb.set_trace()
