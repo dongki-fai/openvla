@@ -165,14 +165,17 @@ def get_vla_action(vla, processor, base_vla_name, obs, task_label, unnorm_key, c
     else:  # OpenVLA
         prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut:"
 
-    # Process inputs.
-    inputs = processor(prompt, image).to(DEVICE, dtype=torch.bfloat16)
+
 
     # <class 'deepspeed.inference.engine.InferenceEngine'>
     if isinstance(vla, InferenceEngine):
+        inputs = processor(prompt, image).to(DEVICE, dtype=torch.float16)
         # engine deepspeed model
-        action = vla.module.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
+        action = vla.module.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False, use_cache=False)
     else:
+        # Process inputs.
+        inputs = processor(prompt, image).to(DEVICE, dtype=torch.bfloat16)
+
         # normal vla model
         action = vla.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
     return action

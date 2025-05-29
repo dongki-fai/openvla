@@ -160,7 +160,7 @@ oneshot(model=model,
         output_dir="openvla-7b-pruned-2_4-oneshot-not-compressed",)
 
 
-save_dir = "openvla-7b-pruned-2_4-not-compressed"       # “ct” = compressed-tensor
+save_dir = "openvla-7b-pruned-2_4-disabled-sparse-compression"       # “ct” = compressed-tensor
 
 total_params = 0
 zero_params  = 0
@@ -201,6 +201,7 @@ print(f"[✓] Model and processor saved to {save_dir}")
 # layer = model.vision_backbone.featurizer.blocks[0].attn.qkv
 
 # W = layer.weight.data.cpu().numpy()   # shape (out_dim, in_dim)
+## W = layer.weight.data.to(torch.float32).cpu().numpy()
 
 # # make a binary mask: 0 where W==0, 1 everywhere else
 # binary = (W != 0).astype(int)

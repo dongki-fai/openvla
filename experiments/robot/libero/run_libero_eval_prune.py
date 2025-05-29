@@ -62,7 +62,6 @@ from safetensors.torch import load_file
 import glob
 import torch
 from PIL import Image
-import torch
 
 from experiments.robot.openvla_utils import get_processor
 
@@ -122,71 +121,33 @@ def eval_libero(cfg: GenerateConfig) -> None:
     cfg.unnorm_key = cfg.task_suite_name
 
 
-
     # Manually load the raw compressed state dict
     # Find all your shards
-    shard_paths = sorted(glob.glob("openvla-7b-pruned-2_4-ct-sandbox/model-*-of-*.safetensors"))
-
-    # Load and merge
-    # state_dict = {}
-    # for p in shard_paths:
-    #     sd = load_file(p)
-    #     state_dict.update(sd)
+    shard_paths = sorted(glob.glob("openvla-7b-pruned-2_4-disabled-sparse-compression/model-*-of-*.safetensors"))
 
     # Load the safetensors weights (float32)
     state_dict = {}
-    from tqdm import tqdm
-    for p in tqdm(shard_paths):
+    for p in shard_paths:
         sd = load_file(p)
         # Convert each tensor to bfloat16
         for k, v in sd.items():
             print("k:", k)
-            state_dict[k] = v.to(torch.bfloat16)
+            state_dict[k] = v.to(torch.float16)
 
     # Instantiate bare model with no quant hooks
-    config = AutoConfig.from_pretrained("openvla-7b-pruned-2_4-ct-sandbox", trust_remote_code=True)
+    config = AutoConfig.from_pretrained("openvla-7b-pruned-2_4-disabled-sparse-compression", trust_remote_code=True)
     model = AutoModelForVision2Seq.from_config(
         config,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float16,
         trust_remote_code=True,
     )
     model.load_state_dict(state_dict, strict=False)
-
-    for name, submod in model.named_parameters():
-        print(f" - {name}: {type(submod)}")
-
-        if "vision_backbone.featurizer.blocks.0.attn.qkv" in name:
-            print(f"Parameters in {name}:")
-            print(submod.parameters())
-            for param_name, param in submod.named_parameters():
-                print(f"{name}.{param_name}:", param.data)
-
-        if "vision_backbone.featurizer.blocks.0.mlp.fc1" in name:
-            print(f"Parameters in {name}:")
-            print(submod.parameters())
-            for param_name, param in submod.named_parameters():
-                print(f"{name}.{param_name}:", param.data)
-
-    exit()
-
-
-
-        # table_rows = []
-        # for name, submod in model.named_children():
-        #     n_params = sum(p.numel() for p in submod.parameters())
-        #     frac      = n_params / total_params
-        #     table_rows.append((name, n_params, frac))
-
-
-        # for name, module in model.named_children():
-        #     print(f" - {name}: {type(module)}")
-
 
     # Wrap in DeepSpeed’s sparse inference engine
     engine = deepspeed.init_inference(
         model,
         mp_size=1,
-        dtype=torch.bfloat16,
+        dtype=torch.float16,
         replace_method="auto",
         replace_with_kernel_inject=True,
     )
