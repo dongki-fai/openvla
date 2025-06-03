@@ -377,7 +377,7 @@ class PrismaticVLM(VLM):
         if attention_mask is not None:
             projected_patch_attention_mask = torch.full(
                 (projected_patch_embeddings.shape[0], projected_patch_embeddings.shape[1]),
-                True,
+                1, # Changed from True to 1 for compatibility with ONNX Export
                 dtype=attention_mask.dtype,
                 device=attention_mask.device,
             )
@@ -446,7 +446,7 @@ class PrismaticVLM(VLM):
             )
             unimodal_attention_pad = torch.full(
                 (len(unimodal_indices), projected_patch_embeddings.shape[1]),
-                False,
+                1, # Changed from True to 1 for compatibility with ONNX Export
                 dtype=attention_mask.dtype,
                 device=attention_mask.device,
             )
