@@ -112,6 +112,36 @@ model = get_model(cfg)
 # for name, module in model.named_children():
 #     print(f" - {name}: {type(module)}")
 
+# FULL_MODEL_SIZE_GB = 29.0          # given
+
+# def pretty_param_count(n):
+#     return f"{n/1e6:9.2f} M"
+
+# def pretty_size_gb(frac):
+#     size_gb = frac * FULL_MODEL_SIZE_GB
+#     return f"{size_gb:6.2f} GB"
+
+# print(f"\n[Model Class] {type(model)}\n")
+# print("Top-level sub-modules, parameter share, and FP32 size")
+# print("="*70)
+
+# total_params = sum(p.numel() for p in model.parameters())
+
+# table_rows = []
+# for name, submod in model.named_children():
+#     n_params = sum(p.numel() for p in submod.parameters())
+#     frac      = n_params / total_params
+#     table_rows.append((name, n_params, frac))
+
+# # neat, aligned printing
+# for name, n_params, frac in table_rows:
+#     print(f"{name:<25s} {pretty_param_count(n_params)}"
+#           f"   {frac*100:6.2f}%   {pretty_size_gb(frac)}")
+
+# print("-"*70)
+# print(f"{'TOTAL':<25s} {pretty_param_count(total_params)}"
+#       f"  100.00%   {FULL_MODEL_SIZE_GB:6.2f} GB")
+
 # Extract the LLM backbone
 # llm = model.language_model
 llm = model.language_model.float() 
