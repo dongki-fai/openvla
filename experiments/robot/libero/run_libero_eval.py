@@ -64,6 +64,7 @@ class GenerateConfig:
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
     load_in_8bit: bool = False                       # (For OpenVLA only) Load with 8-bit quantization
     load_in_4bit: bool = False                       # (For OpenVLA only) Load with 4-bit quantization
+    pruned_inference: bool = False                    # Whether to prune the model (not used in this script)
 
     center_crop: bool = True                         # Center crop? (if trained w/ random crop image aug)
 

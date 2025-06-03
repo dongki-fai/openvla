@@ -14,8 +14,11 @@ from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
 
-from deepspeed.inference.engine import InferenceEngine 
+from torch.sparse import to_sparse_semi_structured, SparseSemiStructuredTensor
+import gc
+from torch import nn
 
+SparseSemiStructuredTensor._FORCE_CUTLASS = True
 
 # Initialize important constants and pretty-printing mode in NumPy.
 ACTION_DIM = 7
@@ -30,12 +33,36 @@ OPENVLA_V01_SYSTEM_PROMPT = (
     "The assistant gives helpful, detailed, and polite answers to the user's questions."
 )
 
+def patched_from_dense(cls, original_tensor: torch.Tensor):
+    cls._validate_device_dim_dtype_shape(original_tensor)
+    (
+        sparse_tensor_cutlass,
+        meta_tensor_cutlass,
+    ) = sparse_semi_structured_from_dense_cutlass(original_tensor)
+
+    shape = original_tensor.shape
+    requires_grad = original_tensor.requires_grad
+    # Free original tensor as soon as it's no longer needed
+    del original_tensor
+    torch.cuda.empty_cache()
+
+    return cls(
+        shape=shape,
+        packed=sparse_tensor_cutlass,
+        meta=meta_tensor_cutlass,
+        packed_t=None,
+        meta_t=None,
+        compressed_swizzled_bitmask=None,
+        requires_grad=False,
+    )
+
+SparseSemiStructuredTensor.from_dense = classmethod(patched_from_dense)
 
 def get_vla(cfg):
     """Loads and returns a VLA model from checkpoint."""
     # Load VLA checkpoint.
     print("[*] Instantiating Pretrained VLA model")
-    print("[*] Loading in BF16 with Flash-Attention Enabled")
+
 
     # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
     AutoConfig.register("openvla", OpenVLAConfig)
@@ -43,9 +70,17 @@ def get_vla(cfg):
     AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
     AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
 
+    attn_implementation = None
+
+    # if cfg.pruned_inference:
+    #     attn_implementation = None
+    # else:
+    #     attn_implementation = "flash_attention_2"
+    #     print("[*] Loading in BF16 with Flash-Attention Enabled")
+
     vla = AutoModelForVision2Seq.from_pretrained(
         cfg.pretrained_checkpoint,
-        attn_implementation="eager", #"flash_attention_2", # 
+        attn_implementation=attn_implementation,
         torch_dtype=torch.bfloat16,
         load_in_8bit=cfg.load_in_8bit,
         load_in_4bit=cfg.load_in_4bit,
@@ -53,11 +88,31 @@ def get_vla(cfg):
         trust_remote_code=True,
     )
 
+
     # Move model to device.
     # Note: `.to()` is not supported for 8-bit or 4-bit bitsandbytes models, but the model will
     #       already be set to the right devices and casted to the correct dtype upon loading.
     if not cfg.load_in_8bit and not cfg.load_in_4bit:
         vla = vla.to(DEVICE)
+
+
+    if cfg.pruned_inference:
+        for fqn, module in vla.named_modules():
+            if isinstance(module, nn.Linear): #and "layer" in fqn:
+                if module.weight.shape[0] % 32 == 0 and module.weight.shape[1] % 64 == 0:
+                    print(f"Converting {fqn} to sparse semi-structured")
+                    # module.weight = nn.Parameter(to_sparse_semi_structured(module.weight))
+                    old_weight = module.weight.detach()
+                    sparse_weight = to_sparse_semi_structured(old_weight)
+                    module.weight = nn.Parameter(sparse_weight)
+                    del old_weight, sparse_weight
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                else:
+                    print(f"[Dimension Error] Skipping {fqn} as it does not have the right dimensions for sparse semi-structured conversion.")
+            else:
+                print(f"Skipping {fqn} as it is not a linear layer in the transformer blocks.")
+
 
     # Load dataset stats used during finetuning (for action un-normalization).
     dataset_statistics_path = os.path.join(cfg.pretrained_checkpoint, "dataset_statistics.json")
@@ -165,17 +220,10 @@ def get_vla_action(vla, processor, base_vla_name, obs, task_label, unnorm_key, c
     else:  # OpenVLA
         prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut:"
 
+    # Process inputs.
+    inputs = processor(prompt, image).to(DEVICE, dtype=torch.bfloat16)
 
+    # normal vla model
+    action = vla.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False, use_cache=True)
 
-    # <class 'deepspeed.inference.engine.InferenceEngine'>
-    if isinstance(vla, InferenceEngine):
-        inputs = processor(prompt, image).to(DEVICE, dtype=torch.float16)
-        # engine deepspeed model
-        action = vla.module.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False, use_cache=False)
-    else:
-        # Process inputs.
-        inputs = processor(prompt, image).to(DEVICE, dtype=torch.bfloat16)
-
-        # normal vla model
-        action = vla.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
     return action
