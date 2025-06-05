@@ -1,10 +1,9 @@
-from llmcompressor.modifiers.pruning import MagnitudePruningModifier
-from llmcompressor import oneshot
-
 from experiments.robot.robot_utils import get_model
 from experiments.robot.openvla_utils import get_processor
 
-from llmcompressor.modifiers.pruning import WandaPruningModifier
+from llmcompressor.modifiers.pruning import WandaPruningModifier, MagnitudePruningModifier
+from llmcompressor.modifiers.obcq import SparseGPTModifier
+from llmcompressor import oneshot
 
 import torch
 
@@ -21,6 +20,7 @@ import random
 import tensorflow as tf
 from transformers import AutoModelForCausalLM
 import pdb
+
 if not hasattr(torch, "OutOfMemoryError"):
     class _OOM(RuntimeError): pass
     torch.OutOfMemoryError = _OOM
@@ -30,6 +30,32 @@ from datasets import Dataset
 from llmcompressor import oneshot
 from llmcompressor.modifiers.quantization import GPTQModifier
 
+PRUNING_MODIFIER = "Magnitude"  # ["Wanda", "Magnitude", or "SparseGPT"]
+
+# Only one of these should be True at a time
+PRUNE_VISION_BACKBONE = False
+PRUNE_LANGUAGE_MODEL = False
+PRUNE_FULL_MODEL = True
+
+assert sum([PRUNE_VISION_BACKBONE, PRUNE_LANGUAGE_MODEL, PRUNE_FULL_MODEL]) == 1, \
+    "Only one of PRUNE_* flags can be True at a time."
+
+# Determine what parts to prune
+if PRUNE_FULL_MODEL:
+    ignore = [] # or None
+elif PRUNE_VISION_BACKBONE:
+    ignore = [
+        "re:^language_model\\.",
+        "re:^projector\\.",
+    ]
+elif PRUNE_LANGUAGE_MODEL:
+    ignore = [
+        "re:^vision_backbone\\.",
+        "re:^projector\\.",
+    ]
+else:
+    raise ValueError("No pruning target selected!")
+    
 if not hasattr(torch, "OutOfMemoryError"):
     class _OOM(RuntimeError): pass
     torch.OutOfMemoryError = _OOM
@@ -40,6 +66,7 @@ class DummyConfig:
     pretrained_checkpoint = "/workspace/models/openvla-7b-finetuned-libero-spatial"
     load_in_8bit = False
     load_in_4bit = False
+    pruned_inference = False
 
 
 def build_model_inputs(model, processor, image, instruction):
@@ -148,19 +175,47 @@ ds = Dataset.from_list(calib_list)              # keeps torch tensors as-is
 ds = ds.with_format("torch")                    # no dtype conversion now
 
 
-pruner = WandaPruningModifier(
-    targets="Linear",
-    sparsity=0.50,
-    mask_structure="2:4",     # recognised by Wanda path
-)
+# Create the pruner
+if PRUNING_MODIFIER == "Wanda":
+    pruner = WandaPruningModifier(
+        targets="Linear",
+        sparsity=0.5,
+        mask_structure="2:4",
+        ignore=ignore,
+    )
+elif PRUNING_MODIFIER == "Magnitude":
+    pruner = MagnitudePruningModifier(
+        targets="Linear",
+        init_sparsity=0.0,
+        final_sparsity=0.5,
+        mask_structure="unstructured",  # Does not support "2:4" mask structure
+        ignore=ignore,
+    )
+elif PRUNING_MODIFIER == "SparseGPT":
+    pruner = SparseGPTModifier(
+        targets="Linear",
+        sparsity=0.5,
+        mask_structure="2:4", 
+        ignore=ignore,
+    )
+else:
+    raise ValueError(f"Unknown PRUNING_MODIFIER: {PRUNING_MODIFIER}")
 
 oneshot(model=model,
         recipe=pruner,
         dataset=ds,
-        output_dir="openvla-7b-pruned-2_4-oneshot-not-compressed",)
+        output_dir="delete_me",)
 
+if PRUNE_FULL_MODEL:
+    pruned_scope = "full_model"
+elif PRUNE_VISION_BACKBONE:
+    pruned_scope = "vision_backbone"
+elif PRUNE_LANGUAGE_MODEL:
+    pruned_scope = "language_backbone"
+else:
+    raise ValueError("No pruning target selected!")
 
-save_dir = "openvla-7b-pruned-2_4-disabled-sparse-compression"       # “ct” = compressed-tensor
+save_dir = f"openvla-7b-pruned-2_4-{PRUNING_MODIFIER}-pruned-{pruned_scope}"
 
 total_params = 0
 zero_params  = 0
