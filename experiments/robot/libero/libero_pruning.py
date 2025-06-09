@@ -30,12 +30,15 @@ from datasets import Dataset
 from llmcompressor import oneshot
 from llmcompressor.modifiers.quantization import GPTQModifier
 
-PRUNING_MODIFIER = "Magnitude"  # ["Wanda", "Magnitude", or "SparseGPT"]
+PRUNING_MODIFIER = "Wanda"  # ["Wanda", "Magnitude", or "SparseGPT"]
 
 # Only one of these should be True at a time
 PRUNE_VISION_BACKBONE = False
-PRUNE_LANGUAGE_MODEL = False
-PRUNE_FULL_MODEL = True
+PRUNE_LANGUAGE_MODEL = True
+PRUNE_FULL_MODEL = False
+
+IGNORE_SPECIFIC_LANGUAGE_LAYERS = True 
+LANGUAGE_LAYERS_TO_IGNORE = list(range(15, 32))
 
 assert sum([PRUNE_VISION_BACKBONE, PRUNE_LANGUAGE_MODEL, PRUNE_FULL_MODEL]) == 1, \
     "Only one of PRUNE_* flags can be True at a time."
@@ -55,7 +58,11 @@ elif PRUNE_LANGUAGE_MODEL:
     ]
 else:
     raise ValueError("No pruning target selected!")
-    
+
+IF IGNORE_SPECIFIC_LANGUAGE_LAYERS:
+    ignore += [f"re:^language_model\\.model\\.layers\\.{i}\\." for i in LANGUAGE_LAYERS_TO_IGNORE]
+
+
 if not hasattr(torch, "OutOfMemoryError"):
     class _OOM(RuntimeError): pass
     torch.OutOfMemoryError = _OOM
@@ -215,7 +222,11 @@ elif PRUNE_LANGUAGE_MODEL:
 else:
     raise ValueError("No pruning target selected!")
 
+
 save_dir = f"openvla-7b-pruned-2_4-{PRUNING_MODIFIER}-pruned-{pruned_scope}"
+
+if IGNORE_SPECIFIC_LANGUAGE_LAYERS:
+    save_dir += f"-ignore-lang-layers-{min(LANGUAGE_LAYERS_TO_IGNORE)}-{max(LANGUAGE_LAYERS_TO_IGNORE)}"
 
 total_params = 0
 zero_params  = 0
