@@ -95,21 +95,27 @@ def get_vla(cfg):
     if not cfg.load_in_8bit and not cfg.load_in_4bit:
         vla = vla.to(DEVICE)
 
+    PRUNE_BACKBONE_ONLY = True
+    prune_backbone_name = 'language_model' # or 'language_model' or 'vision_backbone'
+    raise NotImplementedError("Integrate pruning only backbone functionality here cleanly.")
 
     if cfg.pruned_inference:
         for fqn, module in vla.named_modules():
             if isinstance(module, nn.Linear): #and "layer" in fqn:
-                if module.weight.shape[0] % 32 == 0 and module.weight.shape[1] % 64 == 0:
-                    print(f"Converting {fqn} to sparse semi-structured")
-                    # module.weight = nn.Parameter(to_sparse_semi_structured(module.weight))
-                    old_weight = module.weight.detach()
-                    sparse_weight = to_sparse_semi_structured(old_weight)
-                    module.weight = nn.Parameter(sparse_weight)
-                    del old_weight, sparse_weight
-                    torch.cuda.empty_cache()
-                    gc.collect()
+                if prune_backbone_name in fqn:
+                    if module.weight.shape[0] % 32 == 0 and module.weight.shape[1] % 64 == 0:
+                        print(f"Converting {fqn} to sparse semi-structured")
+                        # module.weight = nn.Parameter(to_sparse_semi_structured(module.weight))
+                        old_weight = module.weight.detach()
+                        sparse_weight = to_sparse_semi_structured(old_weight)
+                        module.weight = nn.Parameter(sparse_weight)
+                        del old_weight, sparse_weight
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                    else:
+                        print(f"[Dimension Error] Skipping {fqn} as it does not have the right dimensions for sparse semi-structured conversion.")
                 else:
-                    print(f"[Dimension Error] Skipping {fqn} as it does not have the right dimensions for sparse semi-structured conversion.")
+                    print(f"[Not Language Backbone] Skipping {fqn} as it is not a linear layer in the language backbone.")
             else:
                 print(f"Skipping {fqn} as it is not a linear layer in the transformer blocks.")
 
