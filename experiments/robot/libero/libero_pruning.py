@@ -38,7 +38,7 @@ PRUNE_LANGUAGE_MODEL = True
 PRUNE_FULL_MODEL = False
 
 IGNORE_SPECIFIC_LANGUAGE_LAYERS = True 
-LANGUAGE_LAYERS_TO_IGNORE = list(range(15, 32))
+LANGUAGE_LAYERS_TO_IGNORE = list(range(16, 32))
 
 assert sum([PRUNE_VISION_BACKBONE, PRUNE_LANGUAGE_MODEL, PRUNE_FULL_MODEL]) == 1, \
     "Only one of PRUNE_* flags can be True at a time."
@@ -59,7 +59,7 @@ elif PRUNE_LANGUAGE_MODEL:
 else:
     raise ValueError("No pruning target selected!")
 
-IF IGNORE_SPECIFIC_LANGUAGE_LAYERS:
+if IGNORE_SPECIFIC_LANGUAGE_LAYERS:
     ignore += [f"re:^language_model\\.model\\.layers\\.{i}\\." for i in LANGUAGE_LAYERS_TO_IGNORE]
 
 
