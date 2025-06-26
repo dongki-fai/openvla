@@ -121,6 +121,26 @@ def get_vla(cfg):
     #             print(f"Skipping {fqn} as it is not a linear layer in the transformer blocks.")
 
 
+    # EVEN MORE TO INTEGRATE
+    # LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
+
+    # if cfg.pruned_inference:
+    #     for fqn, module in vla.named_modules():
+    #         if isinstance(module, nn.Linear): #and "layer" in fqn:
+    #             # if "vision_backbone" in fqn:
+    #             if "language_model.model.layers." in fqn:
+    #                 layer_id = int(fqn.split("language_model.model.layers.")[1].split(".")[0])
+    #                 if layer_id not in LANGUAGE_LAYERS_TO_IGNORE:
+    #                     if module.weight.shape[0] % 32 == 0 and module.weight.shape[1] % 64 == 0:
+    #                         print(f"Converting {fqn} to sparse semi-structured")
+    #                         # module.weight = nn.Parameter(to_sparse_semi_structured(module.weight))
+    #                         old_weight = module.weight.detach()
+    #                         sparse_weight = to_sparse_semi_structured(old_weight)
+    #                         module.weight = nn.Parameter(sparse_weight)
+    #                         del old_weight, sparse_weight
+    #                         torch.cuda.empty_cache()
+    #                         gc.collect()
+
     # Load dataset stats used during finetuning (for action un-normalization).
     dataset_statistics_path = os.path.join(cfg.pretrained_checkpoint, "dataset_statistics.json")
     if os.path.isfile(dataset_statistics_path):
