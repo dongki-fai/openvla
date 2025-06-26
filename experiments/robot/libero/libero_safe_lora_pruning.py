@@ -16,36 +16,6 @@ class DummyConfig():
         self.pruned_inference = False
         self.load_to_cpu = True
 
-# def nudge_weights(pruned_model, dense_model, device='cpu'):
-#     for (fqn_pruned, module_pruned), (fqn_dense, module_dense) in zip(pruned_model.named_modules(), dense_model.named_modules()):
-#         if isinstance(module_pruned, nn.Linear): 
-#             if module_pruned.weight.shape[0] % 32 == 0 and module_pruned.weight.shape[1] % 64 == 0:
-#                 print(f"Checking Safety Gap for {fqn_pruned}")
-
-#                 # Get the dense and pruned weights
-#                 W_dense = module_dense.weight.detach()
-#                 W_pruned = module_pruned.weight.detach()
-
-#                 # Compute Alignment Matrix
-#                 alignment_matrix = (W_dense - W_pruned)
-
-#                 U, S, Vh = torch.linalg.svd(alignment_matrix)
-#                 u1 = U[:,   0]         # (d_out,)
-#                 v1 = Vh[0, :]          # (d_in,)
-#                 sigma1 = S[0].item()   # scalar
-
-#                 # low-rank patch
-#                 delta_W = sigma1 * torch.ger(u1, v1)  # rank-1 approximation
-
-#                 print(f'Delta_W: {delta_W[:6, :6]})')
-#                 # Nudge the original pruned model's weight
-#                 module_pruned.weight.add_(delta_W)
-#                 print(f"Nudged: {module_pruned[:6, :6]})")
-
-#     pruned_model.save_pretrained('SparseGPT_nudged') 
-
-
-
 def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', tau=0.8, device='cuda'):
     # Move models to appropriate devices
     pruned_model.eval()
@@ -64,12 +34,21 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
                 # SVD: get top singular component
                 U, S, Vh = torch.linalg.svd(V)
-                u1 = U[:, 0]            # (out_dim,)
-                v1 = Vh[0, :]           # (in_dim,)
-                sigma1 = S[0]
+                r = 25  # number of components to keep, must be << d
+
+                # Slice off the top-r singular triplets
+                U_r   = U[:, :r]        # (d_out × r)
+                S_r   = S[:r]           # (r,)
+                Vh_r  = Vh[:r, :]       # (r × d_in)
+
+                # Sum up each rank-1 piece
+                delta_W = sum(
+                    S_r[i] * torch.ger(U_r[:, i], Vh_r[i, :])
+                    for i in range(r)
+                )
 
                 # Rank-1 patch
-                delta_W = sigma1 * torch.ger(u1, v1)
+                # delta_W = sigma1 * torch.ger(u1, v1)
 
                 # Update weight in-place on its .data buffer
                 module.weight.data.add_(delta_W)
