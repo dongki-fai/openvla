@@ -92,32 +92,33 @@ def get_vla(cfg):
     # Move model to device.
     # Note: `.to()` is not supported for 8-bit or 4-bit bitsandbytes models, but the model will
     #       already be set to the right devices and casted to the correct dtype upon loading.
-    if not cfg.load_in_8bit and not cfg.load_in_4bit:
+    if not cfg.load_in_8bit and not cfg.load_in_4bit and not cfg.load_to_cpu:
         vla = vla.to(DEVICE)
 
-    PRUNE_BACKBONE_ONLY = True
-    prune_backbone_name = 'language_model' # or 'language_model' or 'vision_backbone'
-    raise NotImplementedError("Integrate pruning only backbone functionality here cleanly.")
+    # TODO: Implement this cleanly
+    # PRUNE_BACKBONE_ONLY = True
+    # prune_backbone_name = 'language_model' # or 'language_model' or 'vision_backbone'
+    # raise NotImplementedError("Integrate pruning only backbone functionality here cleanly.")
 
-    if cfg.pruned_inference:
-        for fqn, module in vla.named_modules():
-            if isinstance(module, nn.Linear): #and "layer" in fqn:
-                if prune_backbone_name in fqn:
-                    if module.weight.shape[0] % 32 == 0 and module.weight.shape[1] % 64 == 0:
-                        print(f"Converting {fqn} to sparse semi-structured")
-                        # module.weight = nn.Parameter(to_sparse_semi_structured(module.weight))
-                        old_weight = module.weight.detach()
-                        sparse_weight = to_sparse_semi_structured(old_weight)
-                        module.weight = nn.Parameter(sparse_weight)
-                        del old_weight, sparse_weight
-                        torch.cuda.empty_cache()
-                        gc.collect()
-                    else:
-                        print(f"[Dimension Error] Skipping {fqn} as it does not have the right dimensions for sparse semi-structured conversion.")
-                else:
-                    print(f"[Not Language Backbone] Skipping {fqn} as it is not a linear layer in the language backbone.")
-            else:
-                print(f"Skipping {fqn} as it is not a linear layer in the transformer blocks.")
+    # if cfg.pruned_inference:
+    #     for fqn, module in vla.named_modules():
+    #         if isinstance(module, nn.Linear): #and "layer" in fqn:
+    #             if prune_backbone_name in fqn:
+    #                 if module.weight.shape[0] % 32 == 0 and module.weight.shape[1] % 64 == 0:
+    #                     print(f"Converting {fqn} to sparse semi-structured")
+    #                     # module.weight = nn.Parameter(to_sparse_semi_structured(module.weight))
+    #                     old_weight = module.weight.detach()
+    #                     sparse_weight = to_sparse_semi_structured(old_weight)
+    #                     module.weight = nn.Parameter(sparse_weight)
+    #                     del old_weight, sparse_weight
+    #                     torch.cuda.empty_cache()
+    #                     gc.collect()
+    #                 else:
+    #                     print(f"[Dimension Error] Skipping {fqn} as it does not have the right dimensions for sparse semi-structured conversion.")
+    #             else:
+    #                 print(f"[Not Language Backbone] Skipping {fqn} as it is not a linear layer in the language backbone.")
+    #         else:
+    #             print(f"Skipping {fqn} as it is not a linear layer in the transformer blocks.")
 
 
     # Load dataset stats used during finetuning (for action un-normalization).
