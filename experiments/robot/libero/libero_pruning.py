@@ -38,6 +38,7 @@ PRUNE_LANGUAGE_MODEL = True
 PRUNE_FULL_MODEL = False
 
 IGNORE_SPECIFIC_LANGUAGE_LAYERS = True 
+# Half are: list(range(0, 16)) or list(range(16, 32))
 LANGUAGE_LAYERS_TO_IGNORE = list(range(16, 32))
 
 assert sum([PRUNE_VISION_BACKBONE, PRUNE_LANGUAGE_MODEL, PRUNE_FULL_MODEL]) == 1, \
@@ -67,14 +68,14 @@ if not hasattr(torch, "OutOfMemoryError"):
     class _OOM(RuntimeError): pass
     torch.OutOfMemoryError = _OOM
 
-# Setup dummy config with checkpoint
-class DummyConfig:
-    model_family = "openvla"
-    pretrained_checkpoint = "/workspace/models/openvla-7b-finetuned-libero-spatial"
-    load_in_8bit = False
-    load_in_4bit = False
-    pruned_inference = False
-
+class DummyConfig():
+    def __init__(self, pretrained_checkpoint="/workspace/models/openvla-7b-finetuned-libero-spatial"):
+        self.model_family = "openvla"
+        self.pretrained_checkpoint = pretrained_checkpoint
+        self.load_in_8bit = False
+        self.load_in_4bit = False
+        self.pruned_inference = False
+        self.load_to_cpu = True
 
 def build_model_inputs(model, processor, image, instruction):
     """
