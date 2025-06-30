@@ -9,10 +9,74 @@ from PIL import Image
 from torch import nn
 
 from experiments.robot.openvla_utils import get_processor
-
+from experiments.robot.robot_utils import get_model
 
 SparseSemiStructuredTensor._FORCE_CUTLASS = True
 
+class DummyConfig():
+    def __init__(self, pretrained_checkpoint="/workspace/models/openvla-7b-finetuned-libero-spatial"):
+        self.model_family = "openvla"
+        self.pretrained_checkpoint = pretrained_checkpoint
+        self.load_in_8bit = False
+        self.load_in_4bit = False
+        self.pruned_inference = False
+        self.load_to_cpu = False
+
+model_directory = "/workspace/models/openvla-7b-pruned-2_4-Wanda-pruned-language_backbone-ignore-lang-layers-0-15"
+cfg = DummyConfig()
+
+# Load the full OpenVLA model
+print("[*] Loading full OpenVLA model...")
+model = get_model(cfg)
+model = model.float()  
+
+# Get the processor
+processor = get_processor(cfg)
+
+# construct a dummy observation
+dummy_img = Image.new("RGB", (256,256), color="gray")
+prompt   = "What action should the robot take to pick up the black bowl?"
+
+# preprocess via your HF processor
+inputs = processor(prompt, dummy_img).to("cuda", dtype=torch.bfloat16)
+
+
+# ##########
+
+# ### Languauge Model Linear Layer Benchmarking
+
+# ##########
+
+# Pick a specific linear layer for testing
+target_layer = dict(model.named_modules())["language_model.model.layers.30.self_attn.q_proj"]
+W = target_layer.weight.detach().to(torch.float16)
+
+x = torch.rand(W.shape[1], W.shape[0]).half().cuda()  # [in_features, out_features]
+
+linear = torch.nn.Linear(W.shape[1], W.shape[0]).half().cuda()
+linear.weight = torch.nn.Parameter(W)
+
+with torch.inference_mode():
+    dense_output = linear(x)
+    dense_t = Timer(stmt="linear(x)",
+                    globals={"linear": linear,
+                             "x": x}).blocked_autorange().median * 1e3
+
+    # accelerate via SparseSemiStructuredTensor
+    linear.weight = torch.nn.Parameter(to_sparse_semi_structured(linear.weight))
+
+    sparse_output = linear(x)
+    sparse_t = Timer(stmt="linear(x)",
+                    globals={"linear": linear,
+                             "x": x}).blocked_autorange().median * 1e3
+
+    # sparse and dense matmul are numerically equivalent
+    # On an A100 80GB, we see: `Dense: 0.870ms Sparse: 0.630ms | Speedup: 1.382x`
+    # assert torch.allclose(sparse_output, dense_output, atol=1e-3)
+    print(f"Dense: {dense_t:.3f}ms Sparse: {sparse_t:.3f}ms | Speedup: {(dense_t / sparse_t):.3f}x")
+
+
+# pdb.set_trace()
 
 # # mask Linear weight to be 2:4 sparse
 # mask = torch.Tensor([0, 0, 1, 1]).tile((3072, 2560)).cuda().bool()
@@ -29,47 +93,6 @@ SparseSemiStructuredTensor._FORCE_CUTLASS = True
 
 # x = torch.rand(3072, 10240).half().cuda()
 
-# Setup dummy config with checkpoint
-class DummyConfig:
-    model_family = "openvla"
-    pretrained_checkpoint = "/home/ubuntu/vla/models/openvla-7b-finetuned-libero-spatial"
-    load_in_8bit = False
-    load_in_4bit = False
-
-cfg = DummyConfig()
-
-# Get the processor
-processor = get_processor(cfg)
-
-# construct a dummy observation
-dummy_img = Image.new("RGB", (256,256), color="gray")
-prompt   = "What action should the robot take to pick up the black bowl?"
-
-# preprocess via your HF processor
-inputs = processor(prompt, dummy_img).to("cuda", dtype=torch.bfloat16)
-
-directory = "openvla-7b-pruned-2_4-disabled-sparse-compression"
-
-# Manually load the raw compressed state dict (find all your shards)
-shard_paths = sorted(glob.glob(directory+"/model-*-of-*.safetensors"))
-
-# Load the safetensors weights (float32)
-state_dict = {}
-for p in shard_paths:
-    sd = load_file(p)
-    # Convert each tensor to bfloat16
-    for k, v in sd.items():
-        # print("k:", k)
-        state_dict[k] = v.to(torch.bfloat16).to("cuda")
-
-# Instantiate bare model with no quant hooks
-config = AutoConfig.from_pretrained(directory, trust_remote_code=True)
-model = AutoModelForVision2Seq.from_config(
-    config,
-    torch_dtype=torch.bfloat16,
-    trust_remote_code=True,
-).to("cuda")
-model.load_state_dict(state_dict, strict=False)
 
 
 
@@ -107,41 +130,3 @@ model.load_state_dict(state_dict, strict=False)
 #     print(f"Dense: {dense_t:.3f}ms Sparse: {sparse_t:.3f}ms | Speedup: {(dense_t / sparse_t):.3f}x")
 
 
-
-# ##########
-
-# ### Languauge Model Linear Layer Benchmarking
-
-# ##########
-
-# Pick a specific linear layer for testing
-target_layer = dict(model.named_modules())["language_model.model.layers.0.self_attn.q_proj"]
-W = target_layer.weight.detach().to(torch.float16)
-
-x = torch.rand(W.shape[1], W.shape[0]).half().cuda()  # [in_features, out_features]
-
-linear = torch.nn.Linear(W.shape[1], W.shape[0]).half().cuda()
-linear.weight = torch.nn.Parameter(W)
-
-with torch.inference_mode():
-    dense_output = linear(x)
-    dense_t = Timer(stmt="linear(x)",
-                    globals={"linear": linear,
-                             "x": x}).blocked_autorange().median * 1e3
-
-    # accelerate via SparseSemiStructuredTensor
-    linear.weight = torch.nn.Parameter(to_sparse_semi_structured(linear.weight))
-
-    sparse_output = linear(x)
-    sparse_t = Timer(stmt="linear(x)",
-                    globals={"linear": linear,
-                             "x": x}).blocked_autorange().median * 1e3
-
-    # sparse and dense matmul are numerically equivalent
-    # On an A100 80GB, we see: `Dense: 0.870ms Sparse: 0.630ms | Speedup: 1.382x`
-    # assert torch.allclose(sparse_output, dense_output, atol=1e-3)
-    print(f"Dense: {dense_t:.3f}ms Sparse: {sparse_t:.3f}ms | Speedup: {(dense_t / sparse_t):.3f}x")
-
-
-
-# pdb.set_trace()
