@@ -34,10 +34,10 @@ PRUNING_MODIFIER = "Wanda"  # ["Wanda", "Magnitude", or "SparseGPT"]
 
 # Only one of these should be True at a time
 PRUNE_VISION_BACKBONE = False
-PRUNE_LANGUAGE_MODEL = True
-PRUNE_FULL_MODEL = False
+PRUNE_LANGUAGE_MODEL = False
+PRUNE_FULL_MODEL = True
 
-IGNORE_SPECIFIC_LANGUAGE_LAYERS = True 
+IGNORE_SPECIFIC_LANGUAGE_LAYERS = False 
 # Half are: list(range(0, 16)) or list(range(16, 32))
 LANGUAGE_LAYERS_TO_IGNORE = list(range(16, 32))
 
@@ -46,16 +46,18 @@ assert sum([PRUNE_VISION_BACKBONE, PRUNE_LANGUAGE_MODEL, PRUNE_FULL_MODEL]) == 1
 
 # Determine what parts to prune
 if PRUNE_FULL_MODEL:
-    ignore = [] # or None
+    ignore = ["re:^language_model\\.lm_head\\."] # or None
 elif PRUNE_VISION_BACKBONE:
     ignore = [
         "re:^language_model\\.",
         "re:^projector\\.",
+        "re:^language_model\\.lm_head\\."
     ]
 elif PRUNE_LANGUAGE_MODEL:
     ignore = [
         "re:^vision_backbone\\.",
         "re:^projector\\.",
+        "re:^language_model\\.lm_head\\."
     ]
 else:
     raise ValueError("No pruning target selected!")
