@@ -1,10 +1,18 @@
 import torch
+import pandas as pd
 import pdb
+import json
+import csv
 from torch import nn
 from transformers import AutoModelForCausalLM
 
 from transformers import AutoModelForCausalLM
 from experiments.robot.robot_utils import get_model
+
+SAVE_SINGULAR_VALUES = False 
+RANK = 100  # Number of components to keep for nudging
+# IGNORE_SPECIFIC_LANGUAGE_LAYERS = True
+# LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
 
 # Setup dummy config with checkpoint
 class DummyConfig():
@@ -16,17 +24,38 @@ class DummyConfig():
         self.pruned_inference = False
         self.load_to_cpu = True
 
+
+if SAVE_SINGULAR_VALUES:
+    # CSV setup
+    csv_path = "singular_values.csv"
+    with open(csv_path, "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=["layer","singular_values"])
+        writer.writeheader()
+
 def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', tau=0.8, device='cuda'):
     # Move models to appropriate devices
     pruned_model.eval()
     dense_sd = dense_model.state_dict()
 
+    
+
     # Perform patch under no_grad to avoid in-place grad errors
     with torch.no_grad():
         for name, module in pruned_model.named_modules():
             if isinstance(module, nn.Linear):
+
+                # if IGNORE_SPECIFIC_LANGUAGE_LAYERS: 
+                #     if "language_model" in name:
+                #         layer_id = int(name.split("language_model.model.layers.")[1].split(".")[0])
+                #         if layer_id in LANGUAGE_LAYERS_TO_IGNORE:
+                #             continue
+                #         else:
+                #             pass 
+                # else:
+                #     pass
+
                 print(f"Checking Safety Gap for {name}")
-                Wp = module.weight 
+                Wp = module.weight
                 Wd = dense_sd[name + ".weight"]
 
                 # Compute the gap
@@ -34,7 +63,8 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
                 # SVD: get top singular component
                 U, S, Vh = torch.linalg.svd(V)
-                r = 25  # number of components to keep, must be << d
+                print("SVD singular values:", S)
+                r = RANK  # number of components to keep, must be << d
 
                 # Slice off the top-r singular triplets
                 U_r   = U[:, :r]        # (d_out × r)
@@ -52,7 +82,16 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
                 # Update weight in-place on its .data buffer
                 module.weight.data.add_(delta_W)
-    
+
+                if SAVE_SINGULAR_VALUES:
+                    # append to CSV
+                    with open(csv_path, "a", newline="") as csvfile:
+                        writer = csv.DictWriter(csvfile, fieldnames=["layer","singular_values"])
+                        writer.writerow({
+                            "layer": name,
+                            "singular_values": json.dumps(S.tolist())
+                        })
+                
     # Save the patched model
     pruned_model.save_pretrained(save_dir)
     print(f"Patched model saved to {save_dir}")
