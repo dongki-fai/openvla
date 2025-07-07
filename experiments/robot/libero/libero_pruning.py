@@ -65,7 +65,6 @@ else:
 if IGNORE_SPECIFIC_LANGUAGE_LAYERS:
     ignore += [f"re:^language_model\\.model\\.layers\\.{i}\\." for i in LANGUAGE_LAYERS_TO_IGNORE]
 
-
 if not hasattr(torch, "OutOfMemoryError"):
     class _OOM(RuntimeError): pass
     torch.OutOfMemoryError = _OOM
@@ -79,15 +78,15 @@ class DummyConfig():
         self.pruned_inference = False
         self.load_to_cpu = True
 
-def build_model_inputs(model, processor, image, instruction):
+def build_model_inputs(device, processor, image, instruction):
     """
     Returns the kwargs dict you would normally pass directly to
     `OpenVLAForActionPrediction.forward(...)`.
     """
     inputs = processor(images=image, text=instruction, return_tensors="pt")
-    pixel_values   = inputs["pixel_values"].to(model.device, dtype=torch.bfloat16)
-    input_ids      = inputs["input_ids"].to(model.device)
-    attention_mask = inputs["attention_mask"].to(model.device)
+    pixel_values   = inputs["pixel_values"].to(device, dtype=torch.bfloat16)
+    input_ids      = inputs["input_ids"].to(device)
+    attention_mask = inputs["attention_mask"].to(device)
 
     return {
         "pixel_values":   pixel_values.squeeze(0),   # (3,224,224)  bf16
@@ -103,7 +102,7 @@ def decode_jpeg(jpeg_bytes):
 
 def build_calibration_dataset_from_examples(
     tfrecord_paths,
-    model,
+    device,
     processor,
     num_samples=16,
     seed=42,
@@ -127,7 +126,7 @@ def build_calibration_dataset_from_examples(
                 img_bytes = example.features.feature["steps/observation/image"].bytes_list.value[0]
                 image = decode_jpeg(img_bytes)
 
-                result = build_model_inputs(model, processor, image, instruction)
+                result = build_model_inputs(device, processor, image, instruction)
                 calibration_set.append(result)
 
             except Exception as e:
@@ -140,120 +139,126 @@ def build_calibration_dataset_from_examples(
     print(f"[✓] Collected {len(calibration_set)} calibration examples.")
     return calibration_set
 
-cfg = DummyConfig()
 
-# Load the full OpenVLA model
-print("[*] Loading full OpenVLA model...")
-model = get_model(cfg)
-
-model = model.float()  # ensure model is in float32 for calibration
-
-# Get the processor
-processor = get_processor(cfg)
+if __name__ == "__main__":
 
 
-tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
-tfrecord_paths = [
-    os.path.join(tfrecord_dir, f)
-    for f in sorted(os.listdir(tfrecord_dir))
-    if ".tfrecord" in f
-]
+        
+    cfg = DummyConfig()
 
-calib_data = build_calibration_dataset_from_examples(
-    tfrecord_paths=tfrecord_paths,
-    model=model,
-    processor=processor,
-    num_samples=40,
-)
+    # Load the full OpenVLA model
+    print("[*] Loading full OpenVLA model...")
+    model = get_model(cfg)
 
-print("Number of Calibration Samples", len(calib_data))
+    model = model.float()  # ensure model is in float32 for calibration
+
+    # Get the processor
+    processor = get_processor(cfg)
 
 
-calib_list = []
-for s in calib_data:
-    calib_list.append({
-        "pixel_values"  : s["pixel_values"].cpu(),      # bf16
-        "input_ids"     : s["input_ids"].cpu(),         # int64
-        "attention_mask": s["attention_mask"].cpu(),    # int64
-    })
+    tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
+    tfrecord_paths = [
+        os.path.join(tfrecord_dir, f)
+        for f in sorted(os.listdir(tfrecord_dir))
+        if ".tfrecord" in f
+    ]
 
-ds = Dataset.from_list(calib_list).with_format("torch")
-print(len(ds), ds.column_names)        # sanity-check
-
-# ---- turn it into a HF Dataset -------------------------------------------
-ds = Dataset.from_list(calib_list)              # keeps torch tensors as-is
-ds = ds.with_format("torch")                    # no dtype conversion now
-
-
-# Create the pruner
-if PRUNING_MODIFIER == "Wanda":
-    pruner = WandaPruningModifier(
-        targets="Linear",
-        sparsity=0.5,
-        mask_structure="2:4",
-        ignore=ignore,
+    calib_data = build_calibration_dataset_from_examples(
+        tfrecord_paths=tfrecord_paths,
+        device=model.device,
+        processor=processor,
+        num_samples=40,
     )
-elif PRUNING_MODIFIER == "Magnitude":
-    pruner = MagnitudePruningModifier(
-        targets="Linear",
-        init_sparsity=0.0,
-        final_sparsity=0.5,
-        mask_structure="unstructured",  # Does not support "2:4" mask structure
-        ignore=ignore,
+
+    print("Number of Calibration Samples", len(calib_data))
+
+
+    calib_list = []
+    for s in calib_data:
+        calib_list.append({
+            "pixel_values"  : s["pixel_values"].cpu(),      # bf16
+            "input_ids"     : s["input_ids"].cpu(),         # int64
+            "attention_mask": s["attention_mask"].cpu(),    # int64
+        })
+
+    ds = Dataset.from_list(calib_list).with_format("torch")
+    print(len(ds), ds.column_names)        # sanity-check
+
+    # ---- turn it into a HF Dataset -------------------------------------------
+    ds = Dataset.from_list(calib_list)              # keeps torch tensors as-is
+    ds = ds.with_format("torch")                    # no dtype conversion now
+
+
+    # Create the pruner
+    if PRUNING_MODIFIER == "Wanda":
+        pruner = WandaPruningModifier(
+            targets="Linear",
+            sparsity=0.5,
+            mask_structure="2:4",
+            ignore=ignore,
+        )
+    elif PRUNING_MODIFIER == "Magnitude":
+        pruner = MagnitudePruningModifier(
+            targets="Linear",
+            init_sparsity=0.0,
+            final_sparsity=0.5,
+            mask_structure="unstructured",  # Does not support "2:4" mask structure
+            ignore=ignore,
+        )
+    elif PRUNING_MODIFIER == "SparseGPT":
+        pruner = SparseGPTModifier(
+            targets="Linear",
+            sparsity=0.5,
+            mask_structure="2:4", 
+            ignore=ignore,
+        )
+    else:
+        raise ValueError(f"Unknown PRUNING_MODIFIER: {PRUNING_MODIFIER}")
+
+    oneshot(model=model,
+            recipe=pruner,
+            dataset=ds,
+            output_dir="delete_me",)
+
+    if PRUNE_FULL_MODEL:
+        pruned_scope = "full_model"
+    elif PRUNE_VISION_BACKBONE:
+        pruned_scope = "vision_backbone"
+    elif PRUNE_LANGUAGE_MODEL:
+        pruned_scope = "language_backbone"
+    else:
+        raise ValueError("No pruning target selected!")
+
+
+    save_dir = f"openvla-7b-pruned-2_4-{PRUNING_MODIFIER}-pruned-{pruned_scope}"
+
+    if IGNORE_SPECIFIC_LANGUAGE_LAYERS:
+        save_dir += f"-ignore-lang-layers-{min(LANGUAGE_LAYERS_TO_IGNORE)}-{max(LANGUAGE_LAYERS_TO_IGNORE)}"
+
+    total_params = 0
+    zero_params  = 0
+    for module in model.modules():
+        if isinstance(module, torch.nn.Linear):
+            W = module.weight.data
+            total_params += W.numel()
+            zero_params  += (W == 0).sum().item()
+    print(f"Global zero fraction: {zero_params/total_params:.3%}")
+
+
+    # save in compressed form
+    model.save_pretrained(
+        save_dir,
+        safe_serialization=True,          # safetensors
+        # save_compressed=True,             # write bit-masks instead of dense tensors
+        # compression_scheme="sparse-24-bitmask",   # this string matters!
+        disable_sparse_compression=True,
     )
-elif PRUNING_MODIFIER == "SparseGPT":
-    pruner = SparseGPTModifier(
-        targets="Linear",
-        sparsity=0.5,
-        mask_structure="2:4", 
-        ignore=ignore,
-    )
-else:
-    raise ValueError(f"Unknown PRUNING_MODIFIER: {PRUNING_MODIFIER}")
 
-oneshot(model=model,
-        recipe=pruner,
-        dataset=ds,
-        output_dir="delete_me",)
-
-if PRUNE_FULL_MODEL:
-    pruned_scope = "full_model"
-elif PRUNE_VISION_BACKBONE:
-    pruned_scope = "vision_backbone"
-elif PRUNE_LANGUAGE_MODEL:
-    pruned_scope = "language_backbone"
-else:
-    raise ValueError("No pruning target selected!")
+    processor.save_pretrained(save_dir)
+    print(f"[✓] Model and processor saved to {save_dir}")
 
 
-save_dir = f"openvla-7b-pruned-2_4-{PRUNING_MODIFIER}-pruned-{pruned_scope}"
-
-if IGNORE_SPECIFIC_LANGUAGE_LAYERS:
-    save_dir += f"-ignore-lang-layers-{min(LANGUAGE_LAYERS_TO_IGNORE)}-{max(LANGUAGE_LAYERS_TO_IGNORE)}"
-
-total_params = 0
-zero_params  = 0
-for module in model.modules():
-    if isinstance(module, torch.nn.Linear):
-        W = module.weight.data
-        total_params += W.numel()
-        zero_params  += (W == 0).sum().item()
-print(f"Global zero fraction: {zero_params/total_params:.3%}")
-
-
-# save in compressed form
-model.save_pretrained(
-    save_dir,
-    safe_serialization=True,          # safetensors
-    # save_compressed=True,             # write bit-masks instead of dense tensors
-    # compression_scheme="sparse-24-bitmask",   # this string matters!
-    disable_sparse_compression=True,
-)
-
-processor.save_pretrained(save_dir)
-print(f"[✓] Model and processor saved to {save_dir}")
-
-
+    pdb.set_trace()
 
 # ###############################################
 
@@ -307,5 +312,3 @@ print(f"[✓] Model and processor saved to {save_dir}")
 
 # # save hi-res
 # plt.savefig("vision_backbone_attn_qkv_20x20.png", dpi=300, bbox_inches="tight")
-
-pdb.set_trace()
