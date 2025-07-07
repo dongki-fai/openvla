@@ -116,10 +116,10 @@ def build_nudged_model(pruned_model, dense_model, rank=100):
 
             if isinstance(module, nn.Linear):
 
-                if test_count > 5: 
-                    break
-                else:
-                    test_count += 1
+                # if test_count > 5: 
+                #     break
+                # else:
+                #     test_count += 1
 
                 print(f"Checking Safety Gap for {name}")
                 Wp = module.weight
@@ -256,7 +256,7 @@ if __name__ == "__main__":
         tfrecord_paths=tfrecord_paths,
         device="cuda",
         processor=processor,
-        num_samples=40,
+        num_samples=100,
     )
 
     print("Number of Calibration Samples", len(calib_data))
@@ -283,7 +283,7 @@ if __name__ == "__main__":
         dataset=ds,         # your torch‐formatted HF Dataset
         device="cuda",
         lr=1e-3,
-        epochs=5
+        epochs=20
     )
 
     if save_with_custom_nudged_layers: 
@@ -293,7 +293,8 @@ if __name__ == "__main__":
     else:
         # now export it back to plain nn.Linear’s
         nudged = export_to_dense_linear(nudged)
-        nudged.save_pretrained(f"pruned_model_nudged_linear_rank_{RANK}_with_IL_custom_nuged_layers")
+        nudged.save_pretrained(f"pruned_model_nudged_linear_rank_{RANK}_with_IL")
+        print(f"Patched model saved to pruned_model_nudged_linear_rank_{RANK}_with_IL")
 
     pdb.set_trace()
 
