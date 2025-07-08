@@ -13,72 +13,97 @@ from experiments.robot.openvla_utils import get_processor
 from experiments.robot.libero.libero_pruning import build_calibration_dataset_from_examples
 from experiments.robot.libero.libero_pruning import DummyConfig
 
-RANK = 100  # Number of components to keep for nudging
+RANK = 200  # Number of components to keep for nudging
+EPOCHS = 20  # Number of epochs for imitation training
+LEARNING_RATE = 1e-3  # Learning rate for imitation training
+NUM_DATA_SAMPLES = 100  # Number of calibration samples to use
 save_with_custom_nudged_layers = False # Set to True to save NudgedLinear layers instead of plain Linear
 
+# class NudgedLinear(nn.Module):
+#     def __init__(self, 
+#                 pruned_linear: nn.Linear,
+#                 U_r: torch.Tensor,
+#                 S_r: torch.Tensor, 
+#                 Vh_r: torch.Tensor):
+#         """
+#         U_r:  (d_out, r)
+#         S_r:  (r,)
+#         Vh_r: (r, d_in)
+#         """
+#         super().__init__()
+#         # keep the original pruned weight frozen
+#         self.register_buffer("Wp", pruned_linear.weight.data.clone())
+#         # store the frozen bases
+#         self.register_buffer("U_r", U_r)
+#         self.register_buffer("Vh_r", Vh_r)
+#         # make the top-r singular values trainable
+#         self.sigma = nn.Parameter(S_r.clone())
+#         # copy other module attributes (bias etc)
+#         self.bias = pruned_linear.bias
+# def forward(self, x):
+#     # sparse pruned pass on the *original* weight
+#     y1 = F.linear(x, self.Wp, self.bias)
+
+#     # dense low-rank correction
+#     delta_W = (self.U_r * self.sigma.unsqueeze(0)) @ self.Vh_r
+#     y2 = F.linear(x, delta_W, None)
+
+#     return y1 + y2
+
+
+# class NudgedLinear(nn.Module):
+#     def __init__(self,
+#                  orig: nn.Linear,
+#                  U_r: torch.Tensor,
+#                  S_r: torch.Tensor,
+#                  Vh_r: torch.Tensor):
+#         super().__init__()
+#         # Freeze the original layer in place:
+#         orig.weight.requires_grad = False
+#         if orig.bias is not None:
+#             orig.bias.requires_grad = False
+
+#         # Alias the original weight & bias (no clone):
+#         self.register_buffer("W_p", orig.weight.data)
+#         self.bias = orig.bias
+
+#         # Store only the small rank-r factors:
+#         self.register_buffer("U_r", U_r)           # (d_out, r)
+#         self.register_buffer("Vh_r", Vh_r)         # (r, d_in)
+#         self.sigma = nn.Parameter(S_r)             # (r,)
+
 class NudgedLinear(nn.Module):
-    def __init__(self, 
-                pruned_linear: nn.Linear,
+    def __init__(self,
+                orig: nn.Linear,
                 U_r: torch.Tensor,
                 S_r: torch.Tensor, 
                 Vh_r: torch.Tensor):
-        """
-        U_r:  (d_out, r)
-        S_r:  (r,)
-        Vh_r: (r, d_in)
-        """
         super().__init__()
-        # keep the original pruned weight frozen
-        self.register_buffer("Wp", pruned_linear.weight.data.clone())
-        # store the frozen bases
-        self.register_buffer("U_r", U_r)
-        self.register_buffer("Vh_r", Vh_r)
-        # make the top-r singular values trainable
-        self.sigma = nn.Parameter(S_r.clone())
-        # copy other module attributes (bias etc)
-        self.bias = pruned_linear.bias
+        # freeze the original
+        orig.weight.requires_grad = False
+        if orig.bias is not None:
+            orig.bias.requires_grad = False
+
+        # alias it (no copy)
+        self.W_p  = orig.weight   # shape (d_out, d_in)
+        self.bias = orig.bias
+
+        # store only small factors
+        self.register_buffer("U_r",  U_r)    # (d_out,  r)
+        self.register_buffer("Vh_r", Vh_r)   # (r,      d_in)
+        self.sigma   = nn.Parameter(S_r)     # (r,)
 
     def forward(self, x):
-        # 1) sparse pruned projection
-        # y1 = torch.sparse.mm(self.Wp, x.unsqueeze(-1)).squeeze(-1)
-        y1 = F.linear(x, self.Wp, self.bias)
+        # pruned pass
+        y1 = F.linear(x, self.W_p, self.bias)  
 
-        # 2) low-rank dense correction
-        delta_W = (self.U_r * self.sigma.unsqueeze(0)) @ self.Vh_r
-        y2 = F.linear(x, delta_W, None)
-
+        # low-rank correction
+        z  = x.matmul(self.Vh_r.T)            
+        z  = z * self.sigma                  
+        y2 = z.matmul(self.U_r.T)             
         return y1 + y2
 
 
-def export_to_dense_linear(nudged_model: nn.Module):
-    """
-    Replace every NudgedLinear in-place with a standard nn.Linear
-    whose weight = Wp + U_r*diag(sigma)*Vh_r, and the same bias.
-    """
-    # build a name→module map so we can assign into parents
-    name2mod = dict(nudged_model.named_modules())
-
-    for name, module in list(nudged_model.named_modules()):
-        if isinstance(module, NudgedLinear):
-            # 1) compute the final weight matrix
-            #    delta = (U_r * sigma) @ Vh_r
-            delta = (module.U_r * module.sigma.unsqueeze(0)) @ module.Vh_r
-            W_final = module.Wp + delta        # both are [out, in]
-
-            # 2) build a new plain Linear of the right shape
-            out_f, in_f = W_final.shape
-            new_lin = nn.Linear(in_features=in_f, out_features=out_f, bias=(module.bias is not None))
-            # 3) copy in the weights + bias
-            new_lin.weight.data.copy_(W_final)
-            if module.bias is not None:
-                new_lin.bias.data.copy_(module.bias.data)
-
-            # 4) swap it into the model
-            parent_name, attr = name.rsplit(".", 1)
-            parent_mod = name2mod[parent_name]
-            setattr(parent_mod, attr, new_lin)
-
-    return nudged_model
 
 # def forward(self, x):
 #     # x: [B, N, D_in]
@@ -99,7 +124,8 @@ def export_to_dense_linear(nudged_model: nn.Module):
 
 #     return y1 + y2
 
-def build_nudged_model(pruned_model, dense_model, rank=100):
+
+def build_nudged_model(pruned_model, dense_model, rank=100, device="cuda"):
     """
     Copies pruned_model, and for each nn.Linear, computes
     its U_r,S_r,Vh_r from (dense-pruned) and wraps it in NudgedLinear.
@@ -126,16 +152,22 @@ def build_nudged_model(pruned_model, dense_model, rank=100):
                 Wd = dense_sd[name + ".weight"]
 
                 # Compute the gap
-                V = Wd - Wp
+                V = (Wd.to(device) - Wp.to(device))
 
                 # compute truncated SVD on V
                 U, S, Vh = torch.linalg.svd(V)
-                r = RANK # number of components to keep, must be << d
+                r = rank # number of components to keep, must be << d
                 
                 # Slice off the top-r singular triplets
-                U_r   = U[:, :r]        # (d_out × r)
-                S_r   = S[:r]           # (r,)
-                Vh_r  = Vh[:r, :]       # (r × d_in)
+                U_r   = U[:, :r].cpu()        # (d_out × r)
+                S_r   = S[:r].cpu()           # (r,)
+                Vh_r  = Vh[:r, :].cpu()       # (r × d_in)
+
+
+                # clean up GPU memory immediately
+                del V, U, S, Vh
+                torch.cuda.empty_cache()
+
 
                 # replace with our nudged version
                 parent, attr = name.rsplit(".", 1)
@@ -145,7 +177,44 @@ def build_nudged_model(pruned_model, dense_model, rank=100):
                     NudgedLinear(module, U_r, S_r, Vh_r)
                 )
 
+                # Clean up CPU memory
+                del Wp, Wd, U_r, S_r, Vh_r
+
     return pruned_model
+
+
+def export_to_dense_linear(nudged_model: nn.Module):
+    """
+    Replace every NudgedLinear in-place with a standard nn.Linear
+    whose weight = W_p + (U_r * sigma) @ Vh_r, and the same bias.
+    """
+    # map from full module name → module instance
+    name2mod = dict(nudged_model.named_modules())
+
+    for name, module in list(nudged_model.named_modules()):
+        if isinstance(module, NudgedLinear):
+            # 1) build the low-rank delta
+            #    (U_r * sigma.unsqueeze(0)): [d_out, r]
+            #    @ Vh_r:                    [r, d_in]
+            delta = (module.U_r * module.sigma.unsqueeze(0)) @ module.Vh_r
+            # 2) final fused weight
+            W_final = module.W_p + delta  # both are [d_out, d_in]
+
+            # 3) new plain Linear
+            out_f, in_f = W_final.shape
+            new_lin = nn.Linear(in_features=in_f, out_features=out_f,
+                                bias=(module.bias is not None))
+            # 4) copy weights and bias
+            new_lin.weight.data.copy_(W_final)
+            if module.bias is not None:
+                new_lin.bias.data.copy_(module.bias.data)
+
+            # 5) swap it back into the parent
+            parent_name, attr = name.rsplit(".", 1)
+            parent_mod = name2mod[parent_name]
+            setattr(parent_mod, attr, new_lin)
+
+    return nudged_model
 
 def train_imitation(
     nudged_model: nn.Module,
@@ -218,6 +287,11 @@ def train_imitation(
             optimizer.step()
             total_loss += loss.item()
 
+            # Now drop everything from this iteration
+            del inputs, out_nudged, logits_nudged, logits_dense, loss
+            torch.cuda.empty_cache()
+            
+
         print(f"Epoch {epoch}  avg traj loss = {total_loss/len(dataset):.4f}")
 
     return nudged_model
@@ -239,7 +313,7 @@ if __name__ == "__main__":
     dense_model = dense_model.float()
 
     # build nudged_model with trainable singular‐values
-    nudged_model = build_nudged_model(pruned_model, dense_model, rank=100)
+    nudged_model = build_nudged_model(pruned_model, dense_model, rank=RANK)
 
     # Build the dataset
     tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
@@ -256,7 +330,7 @@ if __name__ == "__main__":
         tfrecord_paths=tfrecord_paths,
         device="cuda",
         processor=processor,
-        num_samples=100,
+        num_samples=NUM_DATA_SAMPLES,
     )
 
     print("Number of Calibration Samples", len(calib_data))
@@ -282,8 +356,8 @@ if __name__ == "__main__":
         dense_model=dense_model,
         dataset=ds,         # your torch‐formatted HF Dataset
         device="cuda",
-        lr=1e-3,
-        epochs=20
+        lr=LEARNING_RATE,
+        epochs=EPOCHS
     )
 
     if save_with_custom_nudged_layers: 
