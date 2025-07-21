@@ -64,12 +64,16 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                 # else:
                 #     pass
 
-                print(f"Checking Safety Gap for {name}")
+                
                 Wp = module.weight
                 Wd = dense_sd[name + ".weight"]
 
-                # Compute the gap
-                V = Wd - Wp
+                if not TOTALLY_REPLACE_PRUNED_WEIGHTS:
+                    print(f"Checking Safety Gap for {name}")
+                    # Compute the gap
+                    V = Wd - Wp
+                else:
+                    V = Wd
 
                 # SVD: get top singular component
                 U, S, Vh = torch.linalg.svd(V)
@@ -103,12 +107,13 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                 # Rank-1 patch
                 # delta_W = sigma1 * torch.ger(u1, v1)
                 
-
-                if TOTALLY_REPLACE_PRUNED_WEIGHTS:
-                    module.weight.data = delta_W
-                else:
+                if not TOTALLY_REPLACE_PRUNED_WEIGHTS:
+                    print(f" -> Adding nudged weights to pruned weights for {name}")
                     # Update weight in-place on its .data buffer
                     module.weight.data.add_(delta_W)
+                else:
+                    print(f" -> Replacing pruned weights with SVD weights for {name}")
+                    module.weight.data = delta_W
 
                 if SAVE_SINGULAR_VALUES:
                     # append to CSV
