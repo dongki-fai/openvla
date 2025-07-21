@@ -9,10 +9,14 @@ from transformers import AutoModelForCausalLM
 from transformers import AutoModelForCausalLM
 from experiments.robot.robot_utils import get_model
 
-SAVE_SINGULAR_VALUES = False 
-RANK = 100  # Number of components to keep for nudging
+
+RANK = 200  # Number of components to keep for nudging
 # IGNORE_SPECIFIC_LANGUAGE_LAYERS = True
 # LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
+CHOOSE_SINGULAR_VALUES_BY = 'Magnitude' # 'Magnitude' or 'Random'
+TOTALLY_REPLACE_PRUNED_WEIGHTS = True  # Whether to replace pruned weights with nudged weights or add them
+SAVE_SINGULAR_VALUES = False 
+SAVE_RANDOM_INDICES = False
 
 # Setup dummy config with checkpoint
 class DummyConfig():
@@ -30,6 +34,12 @@ if SAVE_SINGULAR_VALUES:
     csv_path = "singular_values.csv"
     with open(csv_path, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=["layer","singular_values"])
+        writer.writeheader()
+elif SAVE_RANDOM_INDICES:
+    # CSV setup for random indices
+    csv_path = "singular_values_chosen_indices.csv"
+    with open(csv_path, "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=["layer", "chosen_indices"])
         writer.writeheader()
 
 def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', tau=0.8, device='cuda'):
@@ -66,10 +76,23 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                 print("SVD singular values:", S)
                 r = RANK  # number of components to keep, must be << d
 
-                # Slice off the top-r singular triplets
-                U_r   = U[:, :r]        # (d_out × r)
-                S_r   = S[:r]           # (r,)
-                Vh_r  = Vh[:r, :]       # (r × d_in)
+                if CHOOSE_SINGULAR_VALUES_BY == 'Random':
+                    n_vals = S.size(0)
+                    # pick r random, non-repeating indices
+                    rand_idx = torch.randperm(n_vals, device=S.device)[:r]
+
+                    # extract those components
+                    U_r  = U[:, rand_idx]        # (d_out × r)
+                    S_r  = S[rand_idx]           # (r,)
+                    Vh_r = Vh[rand_idx, :]       # (r × d_in)
+
+                elif CHOOSE_SINGULAR_VALUES_BY == 'Magnitude':
+                    # Slice off the top-r singular triplets
+                    U_r   = U[:, :r]        # (d_out × r)
+                    S_r   = S[:r]           # (r,)
+                    Vh_r  = Vh[:r, :]       # (r × d_in)
+                else:
+                    raise ValueError("CHOOSE_SINGULAR_VALUES_BY must be 'Magnitude' or 'Random'")
 
                 # Sum up each rank-1 piece
                 delta_W = sum(
@@ -79,9 +102,13 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
                 # Rank-1 patch
                 # delta_W = sigma1 * torch.ger(u1, v1)
+                
 
-                # Update weight in-place on its .data buffer
-                module.weight.data.add_(delta_W)
+                if TOTALLY_REPLACE_PRUNED_WEIGHTS:
+                    module.weight.data = delta_W
+                else:
+                    # Update weight in-place on its .data buffer
+                    module.weight.data.add_(delta_W)
 
                 if SAVE_SINGULAR_VALUES:
                     # append to CSV
@@ -90,6 +117,14 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                         writer.writerow({
                             "layer": name,
                             "singular_values": json.dumps(S.tolist())
+                        })
+                elif SAVE_RANDOM_INDICES:
+                    # save the random indices we picked
+                    with open(csv_path, "a", newline="") as csvfile:
+                        writer = csv.DictWriter(csvfile, fieldnames=["layer", "chosen_indices"])
+                        writer.writerow({
+                            "layer": name,
+                            "chosen_indices": json.dumps(rand_idx.tolist())
                         })
                 
     # Save the patched model
