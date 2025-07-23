@@ -8,6 +8,7 @@ from llmcompressor import oneshot
 import torch
 
 from transformers import AutoModelForCausalLM
+from transformers.data import default_data_collator
 from experiments.robot.robot_utils import get_model
 from transformers import AutoProcessor
 from experiments.robot.openvla_utils import get_processor
@@ -25,7 +26,7 @@ if not hasattr(torch, "OutOfMemoryError"):
     class _OOM(RuntimeError): pass
     torch.OutOfMemoryError = _OOM
 
-from datasets import IterableDataset, DatasetDict, Features, Sequence, Value, Array2D, DatasetInfo
+from datasets import IterableDataset
 from datasets import Dataset
 from llmcompressor import oneshot
 from llmcompressor.modifiers.quantization import GPTQModifier
@@ -40,6 +41,7 @@ PRUNE_FULL_MODEL = True
 IGNORE_SPECIFIC_LANGUAGE_LAYERS = False 
 # Half are: list(range(0, 16)) or list(range(16, 32))
 LANGUAGE_LAYERS_TO_IGNORE = list(range(16, 32))
+NUM_CALIB_SAMPLES = 15000
 
 assert sum([PRUNE_VISION_BACKBONE, PRUNE_LANGUAGE_MODEL, PRUNE_FULL_MODEL]) == 1, \
     "Only one of PRUNE_* flags can be True at a time."
@@ -99,18 +101,20 @@ def decode_jpeg(jpeg_bytes):
     image = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
     return image
 
-
 def build_calibration_dataset_from_examples(
     tfrecord_paths,
     device,
     processor,
-    num_samples=16,
+    num_samples,
     seed=42,
 ):
     calibration_set = []
-    random.seed(seed)
 
-    for tfrecord_path in tfrecord_paths:
+    rng = random.Random(seed)
+    paths = list(tfrecord_paths)
+    rng.shuffle(paths)
+
+    for tfrecord_path in paths:
         print(f"[*] Scanning: {tfrecord_path}")
         dataset = tf.data.TFRecordDataset(tfrecord_path)
 
@@ -119,15 +123,19 @@ def build_calibration_dataset_from_examples(
                 break
 
             try:
-                example = tf.train.Example()
-                example.ParseFromString(record.numpy())
+                # use SequenceExample and loop over all steps
+                seq = tf.train.SequenceExample()
+                seq.ParseFromString(record.numpy())
+                ctx = seq.context.feature
 
-                instruction = example.features.feature["steps/language_instruction"].bytes_list.value[0].decode()
-                img_bytes = example.features.feature["steps/observation/image"].bytes_list.value[0]
-                image = decode_jpeg(img_bytes)
+                instruction = ctx["steps/language_instruction"].bytes_list.value[0].decode()
+                img_bytes_list = ctx["steps/observation/image"].bytes_list.value  # list of all frames
 
-                result = build_model_inputs(device, processor, image, instruction)
-                calibration_set.append(result)
+                for img_bytes in img_bytes_list:
+                    if len(calibration_set) >= num_samples:
+                        break
+                    image = decode_jpeg(img_bytes)
+                    calibration_set.append(build_model_inputs(device, processor, image, instruction))
 
             except Exception as e:
                 print(f"[!] Skipping record due to error: {e}")
@@ -142,8 +150,6 @@ def build_calibration_dataset_from_examples(
 
 if __name__ == "__main__":
 
-
-        
     cfg = DummyConfig()
 
     # Load the full OpenVLA model
@@ -155,8 +161,9 @@ if __name__ == "__main__":
     # Get the processor
     processor = get_processor(cfg)
 
+    # tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
+    tfrecord_dir = "/workspace/data/closed_gripper_libero_rlds/libero_spatial_no_noops/1.0.0"
 
-    tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
     tfrecord_paths = [
         os.path.join(tfrecord_dir, f)
         for f in sorted(os.listdir(tfrecord_dir))
@@ -167,27 +174,14 @@ if __name__ == "__main__":
         tfrecord_paths=tfrecord_paths,
         device=model.device,
         processor=processor,
-        num_samples=40,
+        num_samples=NUM_CALIB_SAMPLES,
     )
 
     print("Number of Calibration Samples", len(calib_data))
 
-
-    calib_list = []
-    for s in calib_data:
-        calib_list.append({
-            "pixel_values"  : s["pixel_values"].cpu(),      # bf16
-            "input_ids"     : s["input_ids"].cpu(),         # int64
-            "attention_mask": s["attention_mask"].cpu(),    # int64
-        })
-
-    ds = Dataset.from_list(calib_list).with_format("torch")
+    ds = Dataset.from_list(calib_data).with_format("torch")
+    del calib_data
     print(len(ds), ds.column_names)        # sanity-check
-
-    # ---- turn it into a HF Dataset -------------------------------------------
-    ds = Dataset.from_list(calib_list)              # keeps torch tensors as-is
-    ds = ds.with_format("torch")                    # no dtype conversion now
-
 
     # Create the pruner
     if PRUNING_MODIFIER == "Wanda":
@@ -218,6 +212,7 @@ if __name__ == "__main__":
     oneshot(model=model,
             recipe=pruner,
             dataset=ds,
+            num_calibration_samples=NUM_CALIB_SAMPLES,
             output_dir="delete_me",)
 
     if PRUNE_FULL_MODEL:
@@ -230,7 +225,7 @@ if __name__ == "__main__":
         raise ValueError("No pruning target selected!")
 
 
-    save_dir = f"openvla-7b-pruned-2_4-{PRUNING_MODIFIER}-pruned-{pruned_scope}"
+    save_dir = f"openvla-7b-pruned-2_4-{PRUNING_MODIFIER}-pruned-{pruned_scope}-Closed_Gripper_Data"
 
     if IGNORE_SPECIFIC_LANGUAGE_LAYERS:
         save_dir += f"-ignore-lang-layers-{min(LANGUAGE_LAYERS_TO_IGNORE)}-{max(LANGUAGE_LAYERS_TO_IGNORE)}"
