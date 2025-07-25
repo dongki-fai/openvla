@@ -22,6 +22,7 @@ import tensorflow as tf
 from transformers import AutoModelForCausalLM
 import pdb
 
+
 if not hasattr(torch, "OutOfMemoryError"):
     class _OOM(RuntimeError): pass
     torch.OutOfMemoryError = _OOM
@@ -78,7 +79,7 @@ class DummyConfig():
         self.load_in_8bit = False
         self.load_in_4bit = False
         self.pruned_inference = False
-        self.load_to_cpu = True
+        self.load_to_cpu = False
 
 def build_model_inputs(device, processor, image, instruction):
     """
@@ -148,6 +149,47 @@ def build_calibration_dataset_from_examples(
     return calibration_set
 
 
+def calibration_generator(
+        tfrecord_paths,
+        processor,
+        num_samples,
+        device,
+        seed=42,
+    ):
+
+    rng = random.Random(seed)
+    paths = list(tfrecord_paths)
+    rng.shuffle(paths)
+    count = 0
+
+    for tfrecord_path in paths:
+        print(f"[*] Scanning: {tfrecord_path}")
+        dataset = tf.data.TFRecordDataset(tfrecord_path)
+        for record in dataset:
+            if count >= num_samples:
+                return
+
+            try:
+                # use SequenceExample and loop over all steps
+                seq = tf.train.SequenceExample()
+                seq.ParseFromString(record.numpy())
+                ctx = seq.context.feature
+
+                instruction = ctx["steps/language_instruction"].bytes_list.value[0].decode()
+                img_bytes_list = ctx["steps/observation/image"].bytes_list.value  # list of all frames
+
+                for img_bytes in img_bytes_list:
+                    if count >= num_samples:
+                        return
+                    image = decode_jpeg(img_bytes)
+                    yield build_model_inputs(device, processor, image, instruction)
+                    count += 1
+
+            except Exception as e:
+                print(f"[!] Skipping record due to error: {e}")
+                continue
+
+
 if __name__ == "__main__":
 
     cfg = DummyConfig()
@@ -183,6 +225,11 @@ if __name__ == "__main__":
     del calib_data
     print(len(ds), ds.column_names)        # sanity-check
 
+    # # build a streaming HF IterableDataset (no giant Python list)
+    # gen = lambda: calibration_generator(tfrecord_paths, processor, NUM_CALIB_SAMPLES, device=model.device)
+    # ds  = IterableDataset.from_generator(gen).with_format("torch")
+    # print("[✓] Streaming dataset ready")
+    
     # Create the pruner
     if PRUNING_MODIFIER == "Wanda":
         pruner = WandaPruningModifier(
@@ -213,6 +260,8 @@ if __name__ == "__main__":
             recipe=pruner,
             dataset=ds,
             num_calibration_samples=NUM_CALIB_SAMPLES,
+            pipeline='basic',
+            save_compressed=False,
             output_dir="delete_me",)
 
     if PRUNE_FULL_MODEL:
@@ -229,7 +278,7 @@ if __name__ == "__main__":
 
     if IGNORE_SPECIFIC_LANGUAGE_LAYERS:
         save_dir += f"-ignore-lang-layers-{min(LANGUAGE_LAYERS_TO_IGNORE)}-{max(LANGUAGE_LAYERS_TO_IGNORE)}"
-
+    
     total_params = 0
     zero_params  = 0
     for module in model.modules():
