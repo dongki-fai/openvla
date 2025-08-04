@@ -167,10 +167,10 @@ def eval_libero(cfg: GenerateConfig) -> None:
 
         if cfg.safety_monitor:
             # Initialize safety monitor
-            safety_monitor = LIBEROSafetyMonitor(env, task=task)
+            safety_monitor = LIBEROSafetyMonitor(env, task=task.name)
 
         if cfg.system_monitor:
-            system_monitor = SystemMonitor(task=task)
+            system_monitor = SystemMonitor(task=task.name)
 
         # Start episodes
         task_episodes, task_successes = 0, 0
