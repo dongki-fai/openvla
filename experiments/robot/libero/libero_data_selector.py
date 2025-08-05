@@ -6,7 +6,7 @@ from sklearn.cluster import KMeans
 
 # ---- Config ----
 IN_ROOT  = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
-OUT_ROOT = IN_ROOT.replace("modified_libero_rlds", "k_7_clustered_14000_libero_rlds")
+OUT_ROOT = IN_ROOT.replace("modified_libero_rlds", "closing_and_opening_gripper_libero_rlds")
 GRIPPER_CLOSED_VAL = 1.0          # action[-1] == 1.0 => closed
 PAD_FRAC            = 0.025       # 5% padding on both sides
 ACTION_DIM, STATE_DIM, JOINT_DIM = 7, 8, 7
@@ -175,25 +175,38 @@ for fname in sorted(f for f in os.listdir(IN_ROOT) if ".tfrecord" in f):
 
         if not mask.any():
              continue
-        first = int(np.argmax(mask))            # first closed step
+        first_close = int(np.argmax(mask))            # first closed step
+        last_close = int(T - 1 - np.argmax(mask[::-1])) # last closed step
         pad   = max(1, math.ceil(PAD_FRAC * T))
 
         if SLICE_MODE == 'full':
             # from first→last close, plus pad on each end
-            last  = int(T - 1 - np.argmax(mask[::-1]))
-            start = max(0,          first - pad)
-            end   = min(T - 1, last + pad)
+            start = max(0,          first_close - pad)
+            end   = min(T - 1, last_close + pad)
+
+            new_ex = slice_example(ex, start, end)
+            writer.write(new_ex.SerializeToString())
+            n_out += 1
 
         elif SLICE_MODE == 'window':
             # only around the first close
-            start = max(0, first - pad)
-            end   = min(T - 1, first + pad)
+            first_close_start = max(0, first_close - pad)
+            first_close_end   = min(T - 1, first_close + pad)
+
+            new_ex = slice_example(ex, first_close_start, first_close_end)
+            writer.write(new_ex.SerializeToString())
+            n_out += 1
+
+            # only around the last close
+            last_close_start = max(0, last_close - pad)
+            last_close_end   = min(T - 1, last_close + pad)
+
+            new_ex = slice_example(ex, last_close_start, last_close_end)
+            writer.write(new_ex.SerializeToString())
+            n_out += 1
         else:
             raise ValueError(f"Unknown SLICE_MODE={SLICE_MODE!r}")
 
-        new_ex = slice_example(ex, start, end)
-        writer.write(new_ex.SerializeToString())
-        n_out += 1
 
     writer.close()
     print(f"  Episodes in: {n_in}, written: {n_out}")
