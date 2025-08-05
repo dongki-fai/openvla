@@ -6,7 +6,7 @@ from robosuite.utils.sim_utils import check_contact, get_contacts
 import robosuite.utils.transform_utils as T
 
 class LIBEROSafetyMonitor:
-    def __init__(self, env, contact_force_threshold=50.0, joint_limit_buffer=0.05, task="unknown_task"):
+    def __init__(self, env, contact_force_threshold=50.0, joint_limit_buffer=0.05, task="unknown_task", save_all_logs=True):
         """
         Initialize the SafetyMonitor.
 
@@ -20,6 +20,7 @@ class LIBEROSafetyMonitor:
         self.model = self.env.env.sim.model
         self.data = self.env.env.sim.data
         self.robot = self.env.env.robots[0]  # Assume single robot for now
+        self.save_all_logs = save_all_logs
         
         self._mj_model = self.env.env.sim.model._model
         self._mj_data = self.env.env.sim.data._data
@@ -44,6 +45,10 @@ class LIBEROSafetyMonitor:
         self.object_motion_log_path = os.path.join(self.log_dir, "object_motion.csv")
         self.safety_summary_log_path = os.path.join(self.log_dir, "safety_summary.csv")
 
+        self.all_joint_logs_path = os.path.join(self.log_dir, "all_joints.csv")
+        self.all_object_motion_logs_path = os.path.join(self.log_dir, "all_object_motion.csv")
+        self.all_link_positions_logs_path = os.path.join(self.log_dir, "all_link_positions.csv")
+
         self.task = task
         self.total_steps = 0
         self.episode = 0 
@@ -66,7 +71,7 @@ class LIBEROSafetyMonitor:
 
         # Use robosuite's officially defined contact geoms
         self.robot_contact_geoms = self.robot.robot_model.contact_geoms
-
+        
         # Print once: which robot geoms are monitored for contact
         print(f"[SafetyMonitor] Monitoring contact geoms: {self.robot_contact_geoms}")
         
@@ -86,6 +91,10 @@ class LIBEROSafetyMonitor:
         self.num_unsafe_per_step = []
         self.unsafe_steps = []
         self.episode+=1
+
+        self.joint_logs = []
+        self.object_motion_logs = []
+        self.link_positions_logs = []
 
     def update(self):
         """Update safety statistics based on the current simulator state."""
@@ -116,10 +125,12 @@ class LIBEROSafetyMonitor:
 
             if near_lower or near_upper:
                 # print(f"Joint {name} near limit! (pos={pos:.3f}) limit=({low:.3f}, {high:.3f})")
-                self.joint_limit_violations.append((self.total_steps, name, pos))
+                self.joint_limit_violations.append((self.total_steps, name, pos, low, high))
                 num_unsafe += 1
                 unsafe = True
-
+            
+            if self.save_all_logs:
+                self.joint_logs.append((self.total_steps, name, pos, low, high))
 
         # --- OBJECT VELOCITY CHECK ---
         objects_dict = self.env.env.objects_dict
@@ -148,11 +159,24 @@ class LIBEROSafetyMonitor:
                         num_unsafe += 1
                         unsafe = True
 
+                    if speed > 0.01 and self.save_all_logs:
+                        # Log object motion
+                        self.object_motion_logs.append((self.total_steps, name, speed, accel))
+
                 self.prev_object_velocities[name] = linear_velocity.copy()
 
 
         self.num_unsafe_per_step.append(num_unsafe)
         self.unsafe_steps.append(unsafe)
+
+        # --- LINK POSITIONS LOGGING ---
+        if self.save_all_logs:
+            # Check if robot is within containment
+            for name in self.model.geom_names:
+                if ("robot0" in name and "collision" in name) or ("finger" in name and "collision" in name) or ("hand" in name and "collision" in name):
+                    geom_id = self.model.geom_name2id(name)
+                    pos = self.env.env.sim.data.geom_xpos[geom_id]  # Ensure geom is in sim data
+                    self.link_positions_logs.append((self.total_steps, name, pos[0], pos[1], pos[2]))
 
         # # 4. Estimate object accelerations (finite difference)
         # obj_body_ids = getattr(self.low_level_env, 'obj_body_id', {})
@@ -225,14 +249,16 @@ class LIBEROSafetyMonitor:
         # Joint limit violations
         self.append_to_csv(
             self.joint_limit_log_path,
-            fieldnames=["task", "episode", "step", "joint_name", "position"],
+            fieldnames=["task", "episode", "step", "joint_name", "position", "lower_limit", "upper_limit"],
             rows=[{
                 "task": self.task,
                 "episode": self.episode,
                 "step": step,
                 "joint_name": name,
-                "position": pos
-            } for step, name, pos in self.joint_limit_violations]
+                "position": pos,
+                "lower_limit": lower,
+                "upper_limit": upper
+            } for step, name, pos, lower, upper in self.joint_limit_violations]
         )
 
         # Object motion
@@ -262,6 +288,50 @@ class LIBEROSafetyMonitor:
             } for step in range(len(self.unsafe_steps))]
         )
 
+        if self.save_all_logs:
+            # Joint limit violations
+            self.append_to_csv(
+                self.all_joint_logs_path,
+                fieldnames=["task", "episode", "step", "joint_name", "position", "lower_limit", "upper_limit"],
+                rows=[{
+                    "task": self.task,
+                    "episode": self.episode,
+                    "step": step,
+                    "joint_name": name,
+                    "position": pos,
+                    "lower_limit": lower,
+                    "upper_limit": upper
+                } for step, name, pos, lower, upper in self.joint_logs]
+            )
+
+            # Object motion
+            self.append_to_csv(
+                self.all_object_motion_logs_path,
+                fieldnames=["task", "episode", "step", "object_name", "speed", "acceleration"],
+                rows=[{
+                    "task": self.task,
+                    "episode": self.episode,
+                    "step": step,
+                    "object_name": name,
+                    "speed": speed,
+                    "acceleration": accel
+                } for step, name, speed, accel in self.object_motion_logs]
+            )
+
+            # Object motion
+            self.append_to_csv(
+                self.all_link_positions_logs_path,
+                fieldnames=["task", "episode", "step", "link_name", "x", "y", "z"],
+                rows=[{
+                    "task": self.task,
+                    "episode": self.episode,
+                    "step": step,
+                    "link_name": name,
+                    "x": x,
+                    "y": y,
+                    "z": z
+                } for step, name, x, y, z in self.link_positions_logs]
+            )
 
     def print_all_objects(self):
         print("Movable objects:")
