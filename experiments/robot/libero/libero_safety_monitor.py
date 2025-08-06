@@ -173,6 +173,10 @@ class LIBEROSafetyMonitor:
         if self.save_all_logs:
             # Check if robot is within containment
             for name in self.model.geom_names:
+                
+                if name is None:
+                    continue
+    
                 if ("robot0" in name and "collision" in name) or ("finger" in name and "collision" in name) or ("hand" in name and "collision" in name):
                     geom_id = self.model.geom_name2id(name)
                     pos = self.env.env.sim.data.geom_xpos[geom_id]  # Ensure geom is in sim data
