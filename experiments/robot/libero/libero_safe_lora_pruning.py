@@ -14,7 +14,7 @@ RANK = 200  # Number of components to keep for nudging
 # IGNORE_SPECIFIC_LANGUAGE_LAYERS = True
 # LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
 CHOOSE_SINGULAR_VALUES_BY = 'Magnitude' # 'Magnitude' or 'Random'
-TOTALLY_REPLACE_PRUNED_WEIGHTS = True  # Whether to replace pruned weights with nudged weights or add them
+TOTALLY_REPLACE_PRUNED_WEIGHTS = False  # Whether to replace pruned weights with nudged weights or add them
 SAVE_SINGULAR_VALUES = False 
 SAVE_RANDOM_INDICES = False
 
@@ -47,7 +47,8 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
     pruned_model.eval()
     dense_sd = dense_model.state_dict()
 
-    
+    device_gpu = torch.device(device)
+    device_cpu = torch.device('cpu')
 
     # Perform patch under no_grad to avoid in-place grad errors
     with torch.no_grad():
@@ -64,9 +65,11 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                 # else:
                 #     pass
 
-                
+                # Move ONLY this submodule to GPU  
+                module.to(device_gpu)
+
                 Wp = module.weight
-                Wd = dense_sd[name + ".weight"]
+                Wd = dense_sd[name + ".weight"].to(device_gpu)
 
                 if not TOTALLY_REPLACE_PRUNED_WEIGHTS:
                     print(f"Checking Safety Gap for {name}")
@@ -115,6 +118,10 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                     print(f" -> Replacing pruned weights with SVD weights for {name}")
                     module.weight.data = delta_W
 
+
+                # Move this submodule back to CPU
+                module.to(device_cpu)
+
                 if SAVE_SINGULAR_VALUES:
                     # append to CSV
                     with open(csv_path, "a", newline="") as csvfile:
@@ -138,13 +145,13 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
 # Load the pruned OpenVLA model
 print("[*] Loading pruned OpenVLA model...")
-path_to_pruned_model = "/workspace/models/openvla-7b-pruned-2_4-disabled-sparse-compression"
+path_to_pruned_model = "/workspace/models/openvla-7b-GOAL-pruned-2_4-Wanda-pruned-language_backbone-closing-gripper"
 cfg = DummyConfig(path_to_pruned_model)
 pruned_model = get_model(cfg)
 pruned_model = pruned_model.float()
 
 print("[*] Loading dense OpenVLA model...")
-path_to_dense_model = "/workspace/models/openvla-7b-finetuned-libero-spatial"
+path_to_dense_model = "/workspace/models/openvla-7b-finetuned-libero-goal"
 # path_to_dense_model = "/workspace/openvla/pruned_model_nudged"
 cfg = DummyConfig(path_to_dense_model)
 dense_model = get_model(cfg)
