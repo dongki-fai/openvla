@@ -10,7 +10,7 @@ from transformers import AutoModelForCausalLM
 from experiments.robot.robot_utils import get_model
 
 
-RANK = 200  # Number of components to keep for nudging
+RANK = 500  # Number of components to keep for nudging
 # IGNORE_SPECIFIC_LANGUAGE_LAYERS = True
 # LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
 CHOOSE_SINGULAR_VALUES_BY = 'Magnitude' # 'Magnitude' or 'Random'
@@ -107,13 +107,24 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                     for i in range(r)
                 )
 
+                # print(f"The SVD", delta_W[:8, :8])  # Print the top-left 8x8 block of delta_W
+                # print(f"The Wp", Wp[:8, :8])  # Print the top-left 8x8 block of Wp
+
                 # Rank-1 patch
                 # delta_W = sigma1 * torch.ger(u1, v1)
                 
                 if not TOTALLY_REPLACE_PRUNED_WEIGHTS:
                     print(f" -> Adding nudged weights to pruned weights for {name}")
                     # Update weight in-place on its .data buffer
-                    module.weight.data.add_(delta_W)
+                    # module.weight.data.add_(delta_W)
+
+                    mask = (Wp != 0).to(Wp.dtype)            # 1s where Wp is nonzero, 0s elsewhere
+                    delta_masked = delta_W * mask            # zero out all entries outside the original support
+
+                    # print(f"Mask", delta_masked[:8, :8])  # Print the top-left 8x8 block of delta_masked
+                    module.weight.data.add_(delta_masked)    # now W_new = Wp + Δ only on the mask
+
+
                 else:
                     print(f" -> Replacing pruned weights with SVD weights for {name}")
                     module.weight.data = delta_W
@@ -145,13 +156,13 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
 # Load the pruned OpenVLA model
 print("[*] Loading pruned OpenVLA model...")
-path_to_pruned_model = "/workspace/models/openvla-7b-GOAL-pruned-2_4-Wanda-pruned-language_backbone-closing-gripper"
+path_to_pruned_model = "/workspace/models/openvla-7b-pruned-2_4-Wanda-pruned-language_backbone-calibset-5TotalWindowGripper"
 cfg = DummyConfig(path_to_pruned_model)
 pruned_model = get_model(cfg)
 pruned_model = pruned_model.float()
 
 print("[*] Loading dense OpenVLA model...")
-path_to_dense_model = "/workspace/models/openvla-7b-finetuned-libero-goal"
+path_to_dense_model = "/workspace/models/openvla-7b-finetuned-libero-spatial"
 # path_to_dense_model = "/workspace/openvla/pruned_model_nudged"
 cfg = DummyConfig(path_to_dense_model)
 dense_model = get_model(cfg)
