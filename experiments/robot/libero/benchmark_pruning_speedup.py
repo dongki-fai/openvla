@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch.sparse import to_sparse_semi_structured
 from torch.utils.benchmark import Timer
 from torch import nn
@@ -64,10 +65,16 @@ def compute_memory(
         "hook_MB":   hook_bytes   / (1024**2),
     }
 
+# fuse matmuls so you don't pay the overhead of launching two kernels
+# @torch.jit.script
+# def lowrank_jit(sparse_output, U: torch.Tensor, V: torch.Tensor, x: torch.Tensor):
+#     # V @ x  -> [r, 1], then U_scaled @ that -> [d_out, 1]
+#     return sparse_output + U @ (V @ x)
+
 
 def benchmark_layer(
-    model, 
-    layer_name, 
+    model,
+    layer_name,
     enable_hook=False, 
     rank=1,
     device="cuda"
@@ -83,7 +90,7 @@ def benchmark_layer(
     target_layer = dict(model.named_modules())[layer_name]
     W = target_layer.weight.detach().to(torch.float32)
     print(f"Rank of W: {torch.linalg.matrix_rank(W)}")
-    W = W.to(torch.float16)
+    W = W.to(torch.float16).cuda()
 
     # dummy input x: shape (in_dim, batch=1)
     x = torch.rand(W.shape[1], W.shape[0]).half().cuda() 
@@ -92,6 +99,7 @@ def benchmark_layer(
     linear.weight = torch.nn.Parameter(W)
 
     with torch.inference_mode():
+
         dense_output = linear(x)
         dense_t = Timer(stmt="linear(x)",
                         globals={"linear": linear,
@@ -118,41 +126,85 @@ def benchmark_layer(
     S_r  = torch.rand(rank, device=device).abs().half()       # singular values >0
     Vh_r = torch.randn(rank, d_in, device=device).half()      # right vecs
 
-    # Define the hook for SVD approximation
-    def hook(u, sigma, v, inp):
-        s = v @ inp                       # (r, 1)
-        s = sigma.unsqueeze(1) * s       # scale each component
-        return u @ s     
+    # fold the scale into U directly
+    U_scaled = U_r * S_r.unsqueeze(0)   # [d_out, r]
 
+    @torch.jit.script
+    def lowrank_jit(U: torch.Tensor, V: torch.Tensor, x: torch.Tensor):
+        # V @ x  -> [r, 1], then U_scaled @ that -> [d_out, 1]
+        return linear(x).add_(U @ (V @ x))
+
+    # warm up & benchmark
     with torch.inference_mode():
-        hook_t = Timer(
-            stmt="hook(U_r, S_r, Vh_r, x)",
-            globals={"hook": hook, "U_r": U_r, "S_r": S_r, "Vh_r": Vh_r, "x": x}
-        ).blocked_autorange().median * 1e3  # ms
+        _ = lowrank_jit(U_scaled, Vh_r, x)
 
-    total_t = sparse_t + hook_t
+    hook_t = Timer(
+        stmt="lowrank_jit(U_scaled, Vh_r, x)",
+        globals={"lowrank_jit": lowrank_jit, "U_scaled": U_scaled, "Vh_r": Vh_r, "x": x}
+    ).blocked_autorange(min_run_time=4.0).median * 1e3
+
+    total_t = hook_t
 
 
-    mem = compute_memory(W, rank, dtype=W.dtype)
-    print(f"Memory (MB): dense={mem['dense_MB']:.5f} sparse={mem['sparse_MB']:.5f} hook(r={rank})={mem['hook_MB']:.5f}")
+    # U_scaled = (U_r * S_r.unsqueeze(0)).contiguous()
+    # Vh_r     = Vh_r.contiguous()
+
+    # # pre-create streams for overlap
+    # s0 = torch.cuda.Stream()
+    # s1 = torch.cuda.Stream()
+
+    # # warm up once to avoid one-off launch costs
+    # with torch.inference_mode():
+    #     _ = linear(x)
+    #     _ = lowrank_jit(U_scaled, Vh_r, x)
+    #     with torch.cuda.stream(s0):
+    #         _ = linear(x)
+    #     with torch.cuda.stream(s1):
+    #         _ = lowrank_jit(U_scaled, Vh_r, x)
+    #     torch.cuda.synchronize()
+
+    #     # — PARALLEL-STREAMS timing —
+    # total_t = Timer(
+    #             stmt="""
+    #     with torch.cuda.stream(s0):
+    #         y_sparse = linear(x)
+    #     with torch.cuda.stream(s1):
+    #         y_lowrank = lowrank_jit(U_scaled, Vh_r, x)
+    #     torch.cuda.synchronize()
+    #     y = y_sparse + y_lowrank
+    #     """,
+    #             globals={
+    #                 "s0": s0,
+    #                 "s1": s1,
+    #                 "linear": linear,
+    #                 "lowrank_jit": lowrank_jit,
+    #                 "U_scaled": U_scaled,
+    #                 "Vh_r": Vh_r,
+    #                 "x": x,
+    #             }
+    #         ).blocked_autorange(min_run_time=1.0).median * 1e3
+
+    # mem = compute_memory(W, rank, dtype=W.dtype)
+    # print(f"Memory (MB): dense={mem['dense_MB']:.5f} sparse={mem['sparse_MB']:.5f} hook(r={rank})={mem['hook_MB']:.5f}")
 
     return {
         "dense_t": dense_t,
         "sparse_t": sparse_t,
-        "hook_t":   hook_t,
+        "hook_t":   total_t - sparse_t,
         "total_t":  total_t,
         "rank":      rank
     }
 
+
 if __name__ == "__main__":
     # 0) load pruned model + processor
-    model_directory = "/workspace/models/openvla-7b-pruned-2_4-Wanda-pruned-language_backbone-ignore-lang-layers-0-15"
+    model_directory = "/workspace/models/openvla-7b-GOAL-pruned-2_4-Wanda-pruned-language_backbone-15k-ORIGINAL"
     cfg   = DummyConfig() #(pretrained_checkpoint=model_directory)
     model = get_model(cfg)
     model = model.float() 
     model = model.to("cuda") 
 
-    layer = "language_model.model.layers.16.self_attn.q_proj"
+    layer = "language_model.model.layers.17.self_attn.q_proj"
 
     # sparse-only
     no_hook = benchmark_layer(model, layer, enable_hook=False)
@@ -181,6 +233,14 @@ if __name__ == "__main__":
     # with rank-200 hook
     r200 = benchmark_layer(model, layer, enable_hook=True, rank=200)
     print(f"Rank-200 hook: dense {r200['dense_t']:.3f}, Sparse {r200['sparse_t']:.3f} + hook {r200['hook_t']:.3f} = {r200['total_t']:.3f} ms | Speedup: {(r200['dense_t'] / r200['total_t']):.3f}x")
+
+    # with rank-300 hook
+    r300 = benchmark_layer(model, layer, enable_hook=True, rank=300)
+    print(f"Rank-300 hook: dense {r300['dense_t']:.3f}, Sparse {r300['sparse_t']:.3f} + hook {r300['hook_t']:.3f} = {r300['total_t']:.3f} ms | Speedup: {(r300['dense_t'] / r300['total_t']):.3f}x")
+
+    # with rank-400 hook
+    r400 = benchmark_layer(model, layer, enable_hook=True, rank=400)
+    print(f"Rank-400 hook: dense {r400['dense_t']:.3f}, Sparse {r400['sparse_t']:.3f} + hook {r400['hook_t']:.3f} = {r400['total_t']:.3f} ms | Speedup: {(r400['dense_t'] / r400['total_t']):.3f}x")
 
     # with rank-500 hook
     r500 = benchmark_layer(model, layer, enable_hook=True, rank=500)
