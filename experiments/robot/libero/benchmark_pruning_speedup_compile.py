@@ -167,7 +167,6 @@ class SparseSVDFusedWrap(nn.Module):
         # y.add_(tmp)
         return torch.add(y, tmp)  
     
-
 def run_torch_profiling(model, layer_name, mode, rank=1, device="cuda", batch_size=400):
 
     reset_compile_state()
@@ -291,8 +290,7 @@ if __name__ == "__main__":
     layer = "language_model.model.layers.14.self_attn.v_proj"
     batch_size = 279
     ranks = [1, 8, 25, 50, 100, 200, 300, 400, 500, 1000]
-    ranks = [500]
-    trials = 1
+    trials = 10
     benchmarking_report = {}
 
     # ----- Run profiling for Dense Layer ---
