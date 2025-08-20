@@ -33,30 +33,30 @@ OPENVLA_V01_SYSTEM_PROMPT = (
     "The assistant gives helpful, detailed, and polite answers to the user's questions."
 )
 
-def patched_from_dense(cls, original_tensor: torch.Tensor):
-    cls._validate_device_dim_dtype_shape(original_tensor)
-    (
-        sparse_tensor_cutlass,
-        meta_tensor_cutlass,
-    ) = sparse_semi_structured_from_dense_cutlass(original_tensor)
+# def patched_from_dense(cls, original_tensor: torch.Tensor):
+#     cls._validate_device_dim_dtype_shape(original_tensor)
+#     (
+#         sparse_tensor_cutlass,
+#         meta_tensor_cutlass,
+#     ) = sparse_semi_structured_from_dense_cutlass(original_tensor)
 
-    shape = original_tensor.shape
-    requires_grad = original_tensor.requires_grad
-    # Free original tensor as soon as it's no longer needed
-    del original_tensor
-    torch.cuda.empty_cache()
+#     shape = original_tensor.shape
+#     requires_grad = original_tensor.requires_grad
+#     # Free original tensor as soon as it's no longer needed
+#     del original_tensor
+#     torch.cuda.empty_cache()
 
-    return cls(
-        shape=shape,
-        packed=sparse_tensor_cutlass,
-        meta=meta_tensor_cutlass,
-        packed_t=None,
-        meta_t=None,
-        compressed_swizzled_bitmask=None,
-        requires_grad=False,
-    )
+#     return cls(
+#         shape=shape,
+#         packed=sparse_tensor_cutlass,
+#         meta=meta_tensor_cutlass,
+#         packed_t=None,
+#         meta_t=None,
+#         compressed_swizzled_bitmask=None,
+#         requires_grad=False,
+#     )
 
-SparseSemiStructuredTensor.from_dense = classmethod(patched_from_dense)
+# SparseSemiStructuredTensor.from_dense = classmethod(patched_from_dense)
 
 def get_vla(cfg):
     """Loads and returns a VLA model from checkpoint."""
@@ -95,10 +95,24 @@ def get_vla(cfg):
     if not cfg.load_in_8bit and not cfg.load_in_4bit and not cfg.load_to_cpu:
         vla = vla.to(DEVICE)
 
-    # TODO: Implement this cleanly
+
+    ## TODO: Implement this cleanly
+    if cfg.pruned_inference:
+        FILTER_FOR = 'language_model'  
+        SKIP_LAYERS = ['vision_backbone', 'lm_head', 'projector']
+        from experiments.robot.pruning_utils import attach_sparse_kernel, wrap_linears_with_svd
+
+        # Attach sparse kernel
+        vla = attach_sparse_kernel(vla, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS)
+
+        # Load SVD factors and wrap linears
+        svd_factors_path = "/workspace/models/svd_factors_libero_spatial_lb_5total/svd_factors_rank_500.pt"
+        vla = wrap_linears_with_svd(vla, svd_factors_path, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS, dtype=torch.bfloat16, device="cuda")
+
+    # # TODO: Implement this cleanly
     # PRUNE_BACKBONE_ONLY = True
     # prune_backbone_name = 'language_model' # or 'language_model' or 'vision_backbone'
-    # raise NotImplementedError("Integrate pruning only backbone functionality here cleanly.")
+    # # raise NotImplementedError("Integrate pruning only backbone functionality here cleanly.")
 
     # if cfg.pruned_inference:
     #     for fqn, module in vla.named_modules():

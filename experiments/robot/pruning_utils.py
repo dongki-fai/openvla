@@ -1,0 +1,110 @@
+import torch
+from torch import nn
+import torch.nn.functional as F
+from torch.sparse import to_sparse_semi_structured, SparseSemiStructuredTensor
+import gc
+
+SparseSemiStructuredTensor._FORCE_CUTLASS = True
+
+class SparseSVDFusedWrap(nn.Module):
+    def __init__(self, linear, V, U_T):
+        super().__init__()
+        self.linear = linear
+        self.register_buffer("V", V.contiguous())
+        self.register_buffer("U_T", U_T.contiguous())
+
+    # @torch._dynamo.disable()
+    # def _clone_outside_compile(self, t: torch.Tensor) -> torch.Tensor:
+    #     return t.clone()
+    
+    def forward(self, x):
+        y = F.linear(x, self.linear.weight, self.linear.bias)
+        tmp = (x @ self.V) @ self.U_T
+        return torch.add(y, tmp)  
+        # out = y + tmp
+        # return self._clone_outside_compile(out)
+    
+    
+def is_layer_pruning_enabled(module, layer_name, filter_for=None, skip_layers=None):
+    """
+    Check if layer pruning is enabled for a specific layer.
+
+    filter_for: If provided, only check layers that contain this string in their name.
+        Possible Values: 'language_model', 'vision_backbone', etc.
+    skip_layers: If provided, skip layers that contain any of these strings in their name.
+        Possible Values: ['vision_backbone', 'lm_head', 'projector']
+    """
+    if isinstance(module, nn.Linear): #and "layer" in fqn:
+        if (filter_for is not None) and (filter_for in layer_name):
+            if skip_layers and any(skip_layer in layer_name for skip_layer in skip_layers):
+                return False
+            if module.weight.shape[0] % 32 == 0 and module.weight.shape[1] % 64 == 0:
+                return True
+    return False
+
+
+def attach_sparse_kernel(model, filter_for=None, skip_layers=None):
+
+    print("[*] Attaching sparse kernel to model...")
+
+    for layer_name, module in model.named_modules():
+        if is_layer_pruning_enabled(module, layer_name, filter_for, skip_layers):
+            # print(f"Converting {layer_name} to sparse semi-structured")
+            # module.weight = nn.Parameter(to_sparse_semi_structured(module.weight))
+            old_weight = module.weight.detach()
+            sparse_weight = to_sparse_semi_structured(old_weight)
+            module.weight = nn.Parameter(sparse_weight)
+            del old_weight, sparse_weight
+            torch.cuda.empty_cache()
+            gc.collect()
+        
+    print("[✓] Attached sparse kernel to model.")
+    return model
+
+def wrap_linears_with_svd(model, svd_factors_path, filter_for=None, skip_layers=None, dtype=torch.float16, device="cuda"):
+    """
+    Replaces nn.Linear layers with SparseSVDFusedWrap if factors are available.
+    """
+
+    print("[*] Wrapping Linear layers with SparseSVDFusedWrap...")
+
+    svd_factors = torch.load(svd_factors_path, map_location="cpu")
+
+    for name, module in model.named_modules():
+
+        if is_layer_pruning_enabled(module, name, filter_for, skip_layers):
+            if name not in svd_factors:
+                # print(f"Skipping {name} as no SVD factors found.")
+                continue
+
+            # Grab factors for this layer
+            V = svd_factors[name]["V"].to(device=device, dtype=dtype)
+            U_T = svd_factors[name]["U_T"].to(device=device, dtype=dtype)
+
+            # Replace module in parent
+            parent_name = ".".join(name.split(".")[:-1])
+            child_name = name.split(".")[-1]
+            parent = model.get_submodule(parent_name)
+
+            setattr(parent, child_name,
+                    SparseSVDFusedWrap(module, V, U_T))
+            # print(f"[+] Wrapped {name} with SparseSVDFusedWrap")
+
+    print("[✓] Wrapped all applicable Linear layers with SparseSVDFusedWrap.")
+    return model
+
+
+def compile_linears(model):
+
+    print("[*] Compiling Linear layers...")
+    for name, module in model.named_modules():
+        if isinstance(module, SparseSVDFusedWrap):
+            parent_name = ".".join(name.split(".")[:-1])
+            child_name = name.split(".")[-1]
+            parent = model.get_submodule(parent_name)
+
+            setattr(parent, child_name, torch.compile(module, mode="max-autotune"))
+            # print(f"[✓] Compiled layer: {name}")
+
+    print("[✓] Compiled all applicable Linear layers.")
+    return model
