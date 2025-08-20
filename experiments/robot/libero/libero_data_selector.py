@@ -197,13 +197,13 @@ for fname in sorted(f for f in os.listdir(IN_ROOT) if ".tfrecord" in f):
             writer.write(new_ex.SerializeToString())
             n_out += 1
 
-            # only around the last close
-            last_close_start = max(0, last_close - pad)
-            last_close_end   = min(T - 1, last_close + pad)
+            # # only around the last close
+            # last_close_start = max(0, last_close - pad)
+            # last_close_end   = min(T - 1, last_close + pad)
 
-            new_ex = slice_example(ex, last_close_start, last_close_end)
-            writer.write(new_ex.SerializeToString())
-            n_out += 1
+            # new_ex = slice_example(ex, last_close_start, last_close_end)
+            # writer.write(new_ex.SerializeToString())
+            # n_out += 1
         else:
             raise ValueError(f"Unknown SLICE_MODE={SLICE_MODE!r}")
 
