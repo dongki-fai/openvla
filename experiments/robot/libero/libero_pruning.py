@@ -36,8 +36,8 @@ PRUNING_MODIFIER = "Wanda"  # ["Wanda", "Magnitude", or "SparseGPT"]
 
 # Only one of these should be True at a time
 PRUNE_VISION_BACKBONE = False
-PRUNE_LANGUAGE_MODEL = False
-PRUNE_FULL_MODEL = True
+PRUNE_LANGUAGE_MODEL = True
+PRUNE_FULL_MODEL = False
 
 IGNORE_SPECIFIC_LANGUAGE_LAYERS = False 
 # Half are: list(range(0, 16)) or list(range(16, 32))
@@ -204,7 +204,8 @@ if __name__ == "__main__":
     processor = get_processor(cfg)
 
     # tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
-    tfrecord_dir = "/workspace/data/closed_gripper_libero_rlds/libero_spatial_no_noops/1.0.0"
+    # tfrecord_dir = "/workspace/data/closed_gripper_libero_rlds/libero_spatial_no_noops/1.0.0"
+    tfrecord_dir = "/workspace/data/closed_gripper_2_5_window_libero_rlds/libero_spatial_no_noops/1.0.0"
 
     tfrecord_paths = [
         os.path.join(tfrecord_dir, f)
