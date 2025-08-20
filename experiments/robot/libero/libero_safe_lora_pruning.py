@@ -10,13 +10,17 @@ from transformers import AutoModelForCausalLM
 from experiments.robot.robot_utils import get_model
 
 
-RANK = 500  # Number of components to keep for nudging
+RANK = 1  # Number of components to keep for nudging
 # IGNORE_SPECIFIC_LANGUAGE_LAYERS = True
 # LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
 CHOOSE_SINGULAR_VALUES_BY = 'Magnitude' # 'Magnitude' or 'Random'
 TOTALLY_REPLACE_PRUNED_WEIGHTS = False  # Whether to replace pruned weights with nudged weights or add them
-SAVE_SINGULAR_VALUES = False 
+SAVE_SINGULAR_VALUES_SEPARATELY = True  # Whether to save singular values separately
+SAVE_SINGULAR_VALUES_TO_CSV = False 
 SAVE_RANDOM_INDICES = False
+
+
+SVD_FACTORS = {}  # Dictionary to hold singular value factors for each layer
 
 # Setup dummy config with checkpoint
 class DummyConfig():
@@ -29,7 +33,7 @@ class DummyConfig():
         self.load_to_cpu = True
 
 
-if SAVE_SINGULAR_VALUES:
+if SAVE_SINGULAR_VALUES_TO_CSV:
     # CSV setup
     csv_path = "singular_values.csv"
     with open(csv_path, "w", newline="") as csvfile:
@@ -43,6 +47,8 @@ elif SAVE_RANDOM_INDICES:
         writer.writeheader()
 
 def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', tau=0.8, device='cuda'):
+    global SVD_FACTORS
+
     # Move models to appropriate devices
     pruned_model.eval()
     dense_sd = dense_model.state_dict()
@@ -113,16 +119,30 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                 # Rank-1 patch
                 # delta_W = sigma1 * torch.ger(u1, v1)
                 
-                if not TOTALLY_REPLACE_PRUNED_WEIGHTS:
+                if SAVE_SINGULAR_VALUES_SEPARATELY:
+
+                    U_scaled = U_r * S_r.unsqueeze(0)  # (d_out, r)
+                    U_T_r = U_scaled.t().contiguous()  # (r, d_out)
+                    V_r   = Vh_r.t().contiguous()      # (d_in, r)
+
+                    # Save low-rank factors without changing weight
+                    SVD_FACTORS[name] = {
+                        "V": V_r.cpu(),
+                        "U_T": U_T_r.cpu()
+                    }
+
+                    del U_scaled, U_T_r, V_r
+
+                elif not TOTALLY_REPLACE_PRUNED_WEIGHTS:
                     print(f" -> Adding nudged weights to pruned weights for {name}")
                     # Update weight in-place on its .data buffer
-                    # module.weight.data.add_(delta_W)
+                    module.weight.data.add_(delta_W)
 
-                    mask = (Wp != 0).to(Wp.dtype)            # 1s where Wp is nonzero, 0s elsewhere
-                    delta_masked = delta_W * mask            # zero out all entries outside the original support
+                    # mask = (Wp != 0).to(Wp.dtype)            # 1s where Wp is nonzero, 0s elsewhere
+                    # delta_masked = delta_W * mask            # zero out all entries outside the original support
 
-                    # print(f"Mask", delta_masked[:8, :8])  # Print the top-left 8x8 block of delta_masked
-                    module.weight.data.add_(delta_masked)    # now W_new = Wp + Δ only on the mask
+                    # # print(f"Mask", delta_masked[:8, :8])  # Print the top-left 8x8 block of delta_masked
+                    # module.weight.data.add_(delta_masked)    # now W_new = Wp + Δ only on the mask
 
 
                 else:
@@ -133,7 +153,7 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                 # Move this submodule back to CPU
                 module.to(device_cpu)
 
-                if SAVE_SINGULAR_VALUES:
+                if SAVE_SINGULAR_VALUES_TO_CSV:
                     # append to CSV
                     with open(csv_path, "a", newline="") as csvfile:
                         writer = csv.DictWriter(csvfile, fieldnames=["layer","singular_values"])
@@ -149,10 +169,13 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
                             "layer": name,
                             "chosen_indices": json.dumps(rand_idx.tolist())
                         })
-                
-    # Save the patched model
-    pruned_model.save_pretrained(save_dir)
-    print(f"Patched model saved to {save_dir}")
+    
+    if SAVE_SINGULAR_VALUES_SEPARATELY:
+        torch.save(SVD_FACTORS, f"svd_factors_rank_{RANK}.pt")
+    else:
+        # Save the patched model
+        pruned_model.save_pretrained(save_dir)
+        print(f"Patched model saved to {save_dir}")
 
 # Load the pruned OpenVLA model
 print("[*] Loading pruned OpenVLA model...")
