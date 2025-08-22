@@ -21,19 +21,25 @@ def save_mp4_video(frames, output_path, fps=30):
     print(f"[Success] Saved video to: {output_path}")
 
 # === Setup ===
-tfrecord_path = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0/libero_spatial-train.tfrecord-00007-of-00016"
+tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_10_no_noops/1.0.0"
+
+tfrecord_paths = [
+    os.path.join(tfrecord_dir, f)
+    for f in sorted(os.listdir(tfrecord_dir))
+    if ".tfrecord" in f
+]
 output_dir = "visualize_data"
 os.makedirs(output_dir, exist_ok=True)
 log_file_path = os.path.join(output_dir, "episode_language_log.txt")
 log_file = open(log_file_path, "w")
 
 # === Load all episodes into a list first ===
-raw_dataset = list(tf.data.TFRecordDataset(tfrecord_path))
+raw_dataset = list(tf.data.TFRecordDataset(tfrecord_paths))
 total_episodes = len(raw_dataset)
 print(f"Total episodes in file: {total_episodes}")
 
 # === Sample 10 random episode indices ===
-sampled_indices = random.sample(range(total_episodes), min(25, total_episodes))
+sampled_indices = random.sample(range(total_episodes), min(1, total_episodes))
 
 # === Process sampled episodes ===
 for episode_idx in sampled_indices:
@@ -103,25 +109,36 @@ log_file.close()
 print(f"[Success] Saved log file: {log_file_path}")
 
 
-
-# === Aggregate unique language instructions across all shards ===
+# === Calculate Dataset Statistics ===
+# Aggregate unique language instructions across all episodes
 all_lang_instructions = set()
 total_episode_count = 0
 
-print("\n=== Scanning All TFRecord Files for Unique Language Instructions ===")
-for i in range(16):
-    shard_path = f"/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0/libero_spatial-train.tfrecord-{i:05d}-of-00016"
-    try:
-        dataset = tf.data.TFRecordDataset(shard_path)
-        for raw_record in dataset:
-            example = tf.train.SequenceExample()
-            example.ParseFromString(raw_record.numpy())
-            context = example.context.feature
-            lang = context["steps/language_instruction"].bytes_list.value[0].decode()
-            all_lang_instructions.add(lang)
-            total_episode_count += 1
-    except Exception as e:
-        print(f"[Error] Failed to read {shard_path}: {e}")
+# Track min/max for end effector positions
+x_min, x_max = float("inf"), float("-inf")
+y_min, y_max = float("inf"), float("-inf")
+z_min, z_max = float("inf"), float("-inf")
+
+
+for raw_record in raw_dataset:
+    example = tf.train.SequenceExample()
+    example.ParseFromString(raw_record.numpy())
+    context = example.context.feature
+    lang = context["steps/language_instruction"].bytes_list.value[0].decode()
+    all_lang_instructions.add(lang)
+    total_episode_count += 1
+
+    # Get trajectory length
+    num_steps = len(context["steps/reward"].float_list.value)
+
+    for t in range(num_steps):
+        state = context["steps/observation/state"].float_list.value[t*8:(t+1)*8]
+        x, y, z = state[0], state[1], state[2]
+
+        # Update min/max
+        x_min, x_max = min(x_min, x), max(x_max, x)
+        y_min, y_max = min(y_min, y), max(y_max, y)
+        z_min, z_max = min(z_min, z), max(z_max, z)
 
 # === Print Summary ===
 print("\n=== Summary ===")
@@ -130,3 +147,9 @@ print(f"Unique language instructions found: {len(all_lang_instructions)}")
 print("\nUnique Instructions:")
 for instr in sorted(all_lang_instructions):
     print(f" - {instr}")
+
+# Print EE position bounds
+print("\n=== End Effector Position Bounds ===")
+print(f"x range: [{x_min:.4f}, {x_max:.4f}]")
+print(f"y range: [{y_min:.4f}, {y_max:.4f}]")
+print(f"z range: [{z_min:.4f}, {z_max:.4f}]")
