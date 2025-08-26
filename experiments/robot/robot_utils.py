@@ -12,6 +12,16 @@ from experiments.robot.openvla_utils import (
     get_vla_action,
 )
 
+from experiments.robot.cogact_utils import (
+    get_cogact_vla,
+    get_cogact_action
+)
+
+from experiments.robot.molmoact_utils import (
+    get_molmoact_vla,
+    get_molmoact_processor,
+    get_molmoact_action
+)
 # Initialize important constants and pretty-printing mode in NumPy.
 ACTION_DIM = 7
 DATE = time.strftime("%Y_%m_%d")
@@ -24,7 +34,6 @@ OPENVLA_V01_SYSTEM_PROMPT = (
     "A chat between a curious user and an artificial intelligence assistant. "
     "The assistant gives helpful, detailed, and polite answers to the user's questions."
 )
-
 
 def set_seed_everywhere(seed: int):
     """Sets the random seed for Python, NumPy, and PyTorch functions."""
@@ -41,6 +50,10 @@ def get_model(cfg, wrap_diffusion_policy_for_droid=False):
     """Load model for evaluation."""
     if cfg.model_family == "openvla":
         model = get_vla(cfg)
+    elif cfg.model_family == "cogact":
+        model = get_cogact_vla(cfg)
+    elif cfg.model_family == "molmoact":
+        model = get_molmoact_vla(cfg)
     else:
         raise ValueError("Unexpected `model_family` found in config.")
     print(f"Loaded model: {type(model)}")
@@ -53,7 +66,7 @@ def get_image_resize_size(cfg):
     If `resize_size` is an int, then the resized image will be a square.
     Else, the image will be a rectangle.
     """
-    if cfg.model_family == "openvla":
+    if cfg.model_family == "openvla" or cfg.model_family == "cogact" or cfg.model_family == "molmoact":
         resize_size = 224
     else:
         raise ValueError("Unexpected `model_family` found in config.")
@@ -67,6 +80,10 @@ def get_action(cfg, model, obs, task_label, processor=None):
             model, processor, cfg.pretrained_checkpoint, obs, task_label, cfg.unnorm_key, center_crop=cfg.center_crop
         )
         assert action.shape == (ACTION_DIM,)
+    elif cfg.model_family == "cogact":
+        action = get_cogact_action(model, obs, task_label, cfg.unnorm_key)
+    elif cfg.model_family == "molmoact":
+        action = get_molmoact_action(model, processor, obs, task_label)
     else:
         raise ValueError("Unexpected `model_family` found in config.")
     return action

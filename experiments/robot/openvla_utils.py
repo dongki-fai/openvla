@@ -176,7 +176,6 @@ def get_processor(cfg):
     processor = AutoProcessor.from_pretrained(cfg.pretrained_checkpoint, trust_remote_code=True)
     return processor
 
-
 def crop_and_resize(image, crop_scale, batch_size):
     """
     Center-crops an image to have area `crop_scale` * (original image area), and then resizes back

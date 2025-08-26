@@ -40,6 +40,7 @@ from experiments.robot.libero.libero_utils import (
     save_rollout_video,
 )
 from experiments.robot.openvla_utils import get_processor
+from experiments.robot.molmoact_utils import get_molmoact_processor
 from experiments.robot.robot_utils import (
     DATE_TIME,
     get_action,
@@ -96,6 +97,11 @@ class GenerateConfig:
 
     # fmt: on
 
+    ###############################################################################################################
+    # CogACT-specific parameters
+    ###############################################################################################################
+    ensembler : bool = False                          # Whether to use ensemble of models for action prediction (CogACT only)
+
 
 @draccus.wrap()
 def eval_libero(cfg: GenerateConfig) -> None:
@@ -120,11 +126,23 @@ def eval_libero(cfg: GenerateConfig) -> None:
         if cfg.unnorm_key not in model.norm_stats and f"{cfg.unnorm_key}_no_noops" in model.norm_stats:
             cfg.unnorm_key = f"{cfg.unnorm_key}_no_noops"
         assert cfg.unnorm_key in model.norm_stats, f"Action un-norm key {cfg.unnorm_key} not found in VLA `norm_stats`!"
+    elif cfg.model_family == "cogact":
+        # TODO: Change this later
+        print(f"Ensure that the unnorm_key: {cfg.unnorm_key} is added to the dataset_statistic.json for the CogACT model. Press Enter to confirm...")
+    elif cfg.model_family == "molmoact":
+        print("MolmoAct does not require checking the unnorm_key in the model.")
 
     # [OpenVLA] Get Hugging Face processor
     processor = None
     if cfg.model_family == "openvla":
         processor = get_processor(cfg)
+    # [MolmoAct] Get Hugging Face processor
+    elif cfg.model_family == "molmoact":
+        processor = get_molmoact_processor(cfg)
+
+    if cfg.model_family == "cogact" and cfg.ensembler:
+        from sim_cogact.adaptive_ensemble import AdaptiveEnsembler
+        ensembler = AdaptiveEnsembler(pred_action_horizon=7, adaptive_ensemble_alpha=0.1)
 
     # Initialize local logging
     run_id = f"EVAL-{cfg.task_suite_name}-{cfg.model_family}-{DATE_TIME}"
@@ -243,6 +261,9 @@ def eval_libero(cfg: GenerateConfig) -> None:
                         processor=processor,
                     )
 
+                    if cfg.model_family == "cogact" and cfg.ensembler:
+                        action = ensembler.ensemble_action(action)
+
                     if cfg.system_monitor:
                         system_monitor.stop_and_log()
 
@@ -251,7 +272,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
 
                     # [OpenVLA] The dataloader flips the sign of the gripper action to align with other datasets
                     # (0 = close, 1 = open), so flip it back (-1 = open, +1 = close) before executing the action
-                    if cfg.model_family == "openvla":
+                    if cfg.model_family == "openvla" or cfg.model_family == "cogact" or cfg.model_family == "molmoact":
                         action = invert_gripper_action(action)
 
                     # Execute action in environment
