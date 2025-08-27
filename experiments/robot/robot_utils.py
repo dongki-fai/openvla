@@ -17,6 +17,12 @@ from experiments.robot.cogact_utils import (
     get_cogact_action
 )
 
+from experiments.robot.worldvla_utils import (
+    get_worldvla,
+    get_worldvla_processor,
+    get_worldvla_action
+)
+
 from experiments.robot.molmoact_utils import (
     get_molmoact_vla,
     get_molmoact_processor,
@@ -52,6 +58,8 @@ def get_model(cfg, wrap_diffusion_policy_for_droid=False):
         model = get_vla(cfg)
     elif cfg.model_family == "cogact":
         model = get_cogact_vla(cfg)
+    elif cfg.model_family == "worldvla":
+        model = get_worldvla(cfg)
     elif cfg.model_family == "molmoact":
         model = get_molmoact_vla(cfg)
     else:
@@ -66,8 +74,10 @@ def get_image_resize_size(cfg):
     If `resize_size` is an int, then the resized image will be a square.
     Else, the image will be a rectangle.
     """
-    if cfg.model_family == "openvla" or cfg.model_family == "cogact" or cfg.model_family == "molmoact":
+    if cfg.model_family in ["openvla", "cogact", "molmoact"]:
         resize_size = 224
+    elif cfg.model_family == "worldvla":
+        resize_size = 256
     else:
         raise ValueError("Unexpected `model_family` found in config.")
     return resize_size
@@ -82,6 +92,8 @@ def get_action(cfg, model, obs, task_label, processor=None):
         assert action.shape == (ACTION_DIM,)
     elif cfg.model_family == "cogact":
         action = get_cogact_action(model, obs, task_label, cfg.unnorm_key)
+    elif cfg.model_family == "worldvla":
+        action = get_worldvla_action(model, obs, task_label, processor, cfg.history_type, cfg.action_steps)
     elif cfg.model_family == "molmoact":
         action = get_molmoact_action(model, processor, obs, task_label)
     else:

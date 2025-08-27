@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
-
+from PIL import Image
 import draccus
 import numpy as np
 import tqdm
@@ -41,6 +41,7 @@ from experiments.robot.libero.libero_utils import (
 )
 from experiments.robot.openvla_utils import get_processor
 from experiments.robot.molmoact_utils import get_molmoact_processor
+from experiments.robot.worldvla_utils import get_worldvla_processor, unnorm_min_max_worldvla
 from experiments.robot.robot_utils import (
     DATE_TIME,
     get_action,
@@ -103,6 +104,13 @@ class GenerateConfig:
     ensembler : bool = False                          # Whether to use ensemble of models for action prediction (CogACT only)
 
 
+    ################################################################################################################
+    # WorldVLA-specific parameters
+    #################################################################################################################
+    history_type: str = "2h_1a_img_only"             # Type of history to use. We have only integrated 2h_1a_img_only from WorldVLA
+    action_steps: int = 25                           # Actions to be excuted when multiple actions are generated
+
+
 @draccus.wrap()
 def eval_libero(cfg: GenerateConfig) -> None:
     assert cfg.pretrained_checkpoint is not None, "cfg.pretrained_checkpoint must not be None!"
@@ -139,6 +147,8 @@ def eval_libero(cfg: GenerateConfig) -> None:
     # [MolmoAct] Get Hugging Face processor
     elif cfg.model_family == "molmoact":
         processor = get_molmoact_processor(cfg)
+    elif cfg.model_family == "worldvla":
+        processor = get_worldvla_processor(cfg)
 
     if cfg.model_family == "cogact" and cfg.ensembler:
         from sim_cogact.adaptive_ensemble import AdaptiveEnsembler
@@ -223,6 +233,10 @@ def eval_libero(cfg: GenerateConfig) -> None:
             elif cfg.task_suite_name == "libero_90":
                 max_steps = 400  # longest training demo has 373 steps
 
+            # Needed for WorldVLA:
+            history_image = []
+            action_chunk = []
+
             print(f"Starting episode {task_episodes+1}...")
             log_file.write(f"Starting episode {task_episodes+1}...\n")
             while t < max_steps + cfg.num_steps_wait:
@@ -247,19 +261,33 @@ def eval_libero(cfg: GenerateConfig) -> None:
                         "state": np.concatenate(
                             (obs["robot0_eef_pos"], quat2axisangle(obs["robot0_eef_quat"]), obs["robot0_gripper_qpos"])
                         ),
+                        "history_image": history_image, # Only used by WorldVLA
                     }
 
                     if cfg.system_monitor:
                         system_monitor.start_timing()
 
-                    # Query model to get action
-                    action = get_action(
-                        cfg,
-                        model,
-                        observation,
-                        task_description,
-                        processor=processor,
-                    )
+                    if cfg.model_family in ["openvla", "cogact", "molmoact"]:
+                        # Query model to get action
+                        action = get_action(
+                            cfg,
+                            model,
+                            observation,
+                            task_description,
+                            processor=processor,
+                        )
+                    # TODO: Integrate this in a cleaner way
+                    elif cfg.model_family == "worldvla":
+                        if len(action_chunk) == 0:
+                            action_chunk = get_action(
+                                cfg,
+                                model,
+                                observation,
+                                task_description,
+                                processor=processor,
+                            )
+                        action = action_chunk.pop(0)
+        
 
                     if cfg.model_family == "cogact" and cfg.ensembler:
                         action = ensembler.ensemble_action(action)
@@ -267,16 +295,27 @@ def eval_libero(cfg: GenerateConfig) -> None:
                     if cfg.system_monitor:
                         system_monitor.stop_and_log()
 
-                    # Normalize gripper action [0,1] -> [-1,+1] because the environment expects the latter
-                    action = normalize_gripper_action(action, binarize=True)
 
-                    # [OpenVLA] The dataloader flips the sign of the gripper action to align with other datasets
-                    # (0 = close, 1 = open), so flip it back (-1 = open, +1 = close) before executing the action
-                    if cfg.model_family == "openvla" or cfg.model_family == "cogact" or cfg.model_family == "molmoact":
+                    if cfg.model_family in ["openvla", "cogact", "molmoact"]:
+                        # Normalize gripper action [0,1] -> [-1,+1] because the environment expects the latter
+                        action = normalize_gripper_action(action, binarize=True)
+
+                        # [OpenVLA] The dataloader flips the sign of the gripper action to align with other datasets
+                        # (0 = close, 1 = open), so flip it back (-1 = open, +1 = close) before executing the action
                         action = invert_gripper_action(action)
+                    elif cfg.model_family == "worldvla":
+                        # Un-normalize action
+                        action = unnorm_min_max_worldvla(action)
+                    else:
+                        raise ValueError("Unexpected `model_family` found in config.")
 
                     # Execute action in environment
                     obs, reward, done, info = env.step(action.tolist())
+                    
+                    # Save image to history (for WorldVLA)
+                    if cfg.model_family == "worldvla":
+                        history_image.append(Image.fromarray(img))
+                    
                     if done:
                         task_successes += 1
                         total_successes += 1

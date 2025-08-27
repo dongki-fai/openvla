@@ -1,4 +1,4 @@
-from transformers import AutoProcessor, AutoModelForImageTextToText
+from transformers import AutoProcessor #, AutoModelForImageTextToText
 import torch
 from PIL import Image
 import numpy as np
@@ -7,15 +7,16 @@ import numpy as np
 
 def get_molmoact_vla(cfg):
 
-    # load the model
-    model = AutoModelForImageTextToText.from_pretrained(
-        cfg.pretrained_checkpoint,
-        trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
-    )
+    model = None
+    # # load the model
+    # model = AutoModelForImageTextToText.from_pretrained(
+    #     cfg.pretrained_checkpoint,
+    #     trust_remote_code=True,
+    #     torch_dtype=torch.bfloat16,
+    #     device_map="cuda",
+    # )
 
-    model = model.to("cuda")
+    # model = model.to("cuda")
 
     return model
 
