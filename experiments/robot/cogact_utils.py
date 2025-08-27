@@ -9,10 +9,19 @@ DEVICE = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("
 
 def get_cogact_vla(cfg):
 
+    if 'large' in cfg.pretrained_checkpoint.lower():
+        action_model_type = 'DiT-L'
+    elif 'base' in cfg.pretrained_checkpoint.lower():
+        action_model_type = 'DiT-B'
+    elif 'small' in cfg.pretrained_checkpoint.lower():
+        action_model_type = 'DiT-S'
+    else:
+        raise ValueError(f"Unknown model type in checkpoint path: {cfg.pretrained_checkpoint}")
+
     model = load_cogact(
         cfg.pretrained_checkpoint,
         load_for_training=False,
-        action_model_type='DiT-B',  # choose from ['DiT-S', 'DiT-B', 'DiT-L'] to match the model weight
+        action_model_type=action_model_type,  # choose from ['DiT-S', 'DiT-B', 'DiT-L'] to match the model weight
         future_action_window_size=15,
     )
     # Load vlm to bf16 to save memory

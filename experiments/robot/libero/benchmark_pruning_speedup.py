@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from torch.sparse import to_sparse_semi_structured
 from torch.utils.benchmark import Timer
 from torch import nn
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 from experiments.robot.robot_utils    import get_model
 from PIL import Image
 

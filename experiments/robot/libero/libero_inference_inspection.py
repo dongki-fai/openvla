@@ -14,7 +14,7 @@ from tqdm.auto import tqdm
 import pdb
 
 from experiments.robot.robot_utils import get_model
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 from experiments.robot.pruning_utils import attach_sparse_kernel, wrap_linears_with_svd, compile_linears
 
 from torch.sparse import to_sparse_semi_structured, SparseSemiStructuredTensor
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     model = model.to(torch.float16)
 
     # Get the processor
-    processor = get_processor(cfg)
+    processor = get_openvla_processor(cfg)
 
     tfrecord_dir = "/workspace/data/closed_gripper_2_5_window_libero_rlds/libero_spatial_no_noops/1.0.0"
     tfrecord_paths = [

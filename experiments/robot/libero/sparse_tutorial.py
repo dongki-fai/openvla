@@ -8,7 +8,7 @@ from safetensors.torch import load_file
 from PIL import Image
 from torch import nn
 
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 from experiments.robot.robot_utils import get_model
 
 SparseSemiStructuredTensor._FORCE_CUTLASS = True
@@ -31,7 +31,7 @@ model = get_model(cfg)
 model = model.float()  
 
 # Get the processor
-processor = get_processor(cfg)
+processor = get_openvla_processor(cfg)
 
 # construct a dummy observation
 dummy_img = Image.new("RGB", (256,256), color="gray")

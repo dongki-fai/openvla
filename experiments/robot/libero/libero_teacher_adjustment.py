@@ -13,7 +13,7 @@ from tqdm.auto import tqdm
 import pdb
 
 from experiments.robot.robot_utils import get_model
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 
 NUM_CALIB_SAMPLES = 4000
 
@@ -275,7 +275,7 @@ if __name__ == "__main__":
     dense_model = dense_model.float()
 
     # Get the processor
-    processor = get_processor(cfg)
+    processor = get_openvla_processor(cfg)
 
     tfrecord_dir = "/workspace/data/closed_gripper_2_5_window_libero_rlds/libero_spatial_no_noops/1.0.0"
     tfrecord_paths = [

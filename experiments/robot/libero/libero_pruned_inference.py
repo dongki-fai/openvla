@@ -49,7 +49,7 @@ import torch
 from PIL import Image
 import torch
 
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 
 
 # Manually load the raw compressed state dict
@@ -90,7 +90,7 @@ class DummyConfig:
 cfg = DummyConfig()
 
 # Get the processor
-processor = get_processor(cfg)
+processor = get_openvla_processor(cfg)
 
 # construct a dummy observation
 dummy_img = Image.new("RGB", (256,256), color="gray")

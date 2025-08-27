@@ -171,7 +171,7 @@ def get_vla(cfg):
     return vla
 
 
-def get_processor(cfg):
+def get_openvla_processor(cfg):
     """Get VLA model's Hugging Face processor."""
     processor = AutoProcessor.from_pretrained(cfg.pretrained_checkpoint, trust_remote_code=True)
     return processor

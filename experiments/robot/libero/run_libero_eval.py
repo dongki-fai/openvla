@@ -39,17 +39,18 @@ from experiments.robot.libero.libero_utils import (
     quat2axisangle,
     save_rollout_video,
 )
-from experiments.robot.openvla_utils import get_processor
-from experiments.robot.molmoact_utils import get_molmoact_processor
-from experiments.robot.worldvla_utils import get_worldvla_processor, unnorm_min_max_worldvla
+
 from experiments.robot.robot_utils import (
     DATE_TIME,
+    get_processor,
     get_action,
     get_image_resize_size,
     get_model,
     invert_gripper_action,
     normalize_gripper_action,
     set_seed_everywhere,
+    import_neccessary_libraries,
+    post_process_action,
 )
 
 from experiments.robot.libero.libero_safety_monitor import LIBEROSafetyMonitor
@@ -124,6 +125,9 @@ def eval_libero(cfg: GenerateConfig) -> None:
     # [OpenVLA] Set action un-normalization key
     cfg.unnorm_key = cfg.task_suite_name
 
+    # Import neccessary libraries for the model family
+    import_neccessary_libraries(cfg.model_family)
+
     # Load model
     model = get_model(cfg)
 
@@ -140,15 +144,8 @@ def eval_libero(cfg: GenerateConfig) -> None:
     elif cfg.model_family == "molmoact":
         print("MolmoAct does not require checking the unnorm_key in the model.")
 
-    # [OpenVLA] Get Hugging Face processor
-    processor = None
-    if cfg.model_family == "openvla":
-        processor = get_processor(cfg)
-    # [MolmoAct] Get Hugging Face processor
-    elif cfg.model_family == "molmoact":
-        processor = get_molmoact_processor(cfg)
-    elif cfg.model_family == "worldvla":
-        processor = get_worldvla_processor(cfg)
+    # Get processor (if needed)
+    processor = get_processor(cfg)
 
     if cfg.model_family == "cogact" and cfg.ensembler:
         from sim_cogact.adaptive_ensemble import AdaptiveEnsembler
@@ -295,19 +292,8 @@ def eval_libero(cfg: GenerateConfig) -> None:
                     if cfg.system_monitor:
                         system_monitor.stop_and_log()
 
-
-                    if cfg.model_family in ["openvla", "cogact", "molmoact"]:
-                        # Normalize gripper action [0,1] -> [-1,+1] because the environment expects the latter
-                        action = normalize_gripper_action(action, binarize=True)
-
-                        # [OpenVLA] The dataloader flips the sign of the gripper action to align with other datasets
-                        # (0 = close, 1 = open), so flip it back (-1 = open, +1 = close) before executing the action
-                        action = invert_gripper_action(action)
-                    elif cfg.model_family == "worldvla":
-                        # Un-normalize action
-                        action = unnorm_min_max_worldvla(action)
-                    else:
-                        raise ValueError("Unexpected `model_family` found in config.")
+                    # Post-process action
+                    action = post_process_action(cfg, action)
 
                     # Execute action in environment
                     obs, reward, done, info = env.step(action.tolist())

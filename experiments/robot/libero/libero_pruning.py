@@ -1,5 +1,5 @@
 from experiments.robot.robot_utils import get_model
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 
 from llmcompressor.modifiers.pruning import WandaPruningModifier, MagnitudePruningModifier
 from llmcompressor.modifiers.obcq import SparseGPTModifier
@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM
 from transformers.data import default_data_collator
 from experiments.robot.robot_utils import get_model
 from transformers import AutoProcessor
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 
 import torch
 from PIL import Image
@@ -201,7 +201,7 @@ if __name__ == "__main__":
     model = model.float()  # ensure model is in float32 for calibration
 
     # Get the processor
-    processor = get_processor(cfg)
+    processor = get_openvla_processor(cfg)
 
     # tfrecord_dir = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
     # tfrecord_dir = "/workspace/data/closed_gripper_libero_rlds/libero_spatial_no_noops/1.0.0"

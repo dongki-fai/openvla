@@ -7,27 +7,39 @@ import time
 import numpy as np
 import torch
 
-from experiments.robot.openvla_utils import (
-    get_vla,
-    get_vla_action,
-)
+def import_neccessary_libraries(model_family: str):
+    """Imports neccessary libraries for a given model family."""
+    if model_family == "openvla":
+        from experiments.robot.openvla_utils import (
+            get_vla,
+            get_openvla_processor,
+            get_vla_action,
+        )
+        globals().update(locals())
+    elif model_family == "cogact":
+        from experiments.robot.cogact_utils import (
+            get_cogact_vla,
+            get_cogact_action
+        )
+        globals().update(locals())
+    elif model_family == "worldvla":
+        from experiments.robot.worldvla_utils import (
+            get_worldvla,
+            get_worldvla_processor,
+            get_worldvla_action, 
+            unnorm_min_max_worldvla,
+        )
+        globals().update(locals())
+    elif model_family == "molmoact":
+        from experiments.robot.molmoact_utils import (
+            get_molmoact_vla,
+            get_molmoact_processor,
+            get_molmoact_action
+        )
+        globals().update(locals())
+    else:
+        raise ValueError("Unexpected `model_family` found in config.")
 
-from experiments.robot.cogact_utils import (
-    get_cogact_vla,
-    get_cogact_action
-)
-
-from experiments.robot.worldvla_utils import (
-    get_worldvla,
-    get_worldvla_processor,
-    get_worldvla_action
-)
-
-from experiments.robot.molmoact_utils import (
-    get_molmoact_vla,
-    get_molmoact_processor,
-    get_molmoact_action
-)
 # Initialize important constants and pretty-printing mode in NumPy.
 ACTION_DIM = 7
 DATE = time.strftime("%Y_%m_%d")
@@ -67,6 +79,19 @@ def get_model(cfg, wrap_diffusion_policy_for_droid=False):
     print(f"Loaded model: {type(model)}")
     return model
 
+def get_processor(cfg):
+
+    processor = None
+    if cfg.model_family == "openvla":
+        processor = get_openvla_processor(cfg)
+    elif cfg.model_family == "cogact":
+        processor = None
+    elif cfg.model_family == "molmoact":
+        processor = get_molmoact_processor(cfg)
+    elif cfg.model_family == "worldvla":
+        processor = get_worldvla_processor(cfg)
+
+    return processor
 
 def get_image_resize_size(cfg):
     """
@@ -98,6 +123,23 @@ def get_action(cfg, model, obs, task_label, processor=None):
         action = get_molmoact_action(model, processor, obs, task_label)
     else:
         raise ValueError("Unexpected `model_family` found in config.")
+    return action
+
+def post_process_action(cfg, action):
+
+    if cfg.model_family in ["openvla", "cogact", "molmoact"]:
+        # Normalize gripper action [0,1] -> [-1,+1] because the environment expects the latter
+        action = normalize_gripper_action(action, binarize=True)
+
+        # [OpenVLA] The dataloader flips the sign of the gripper action to align with other datasets
+        # (0 = close, 1 = open), so flip it back (-1 = open, +1 = close) before executing the action
+        action = invert_gripper_action(action)
+    elif cfg.model_family == "worldvla":
+        # Un-normalize action
+        action = unnorm_min_max_worldvla(action)
+    else:
+        raise ValueError("Unexpected `model_family` found in config.")
+
     return action
 
 

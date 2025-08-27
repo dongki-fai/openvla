@@ -26,7 +26,7 @@ from experiments.robot.bridge.bridgev2_utils import (
     save_rollout_data,
     save_rollout_video,
 )
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 from experiments.robot.robot_utils import (
     get_action,
     get_image_resize_size,
@@ -92,7 +92,7 @@ def eval_model_in_bridge_env(cfg: GenerateConfig) -> None:
     # [OpenVLA] Get Hugging Face processor
     processor = None
     if cfg.model_family == "openvla":
-        processor = get_processor(cfg)
+        processor = get_openvla_processor(cfg)
 
     # Initialize the WidowX environment
     env = get_widowx_env(cfg, model)

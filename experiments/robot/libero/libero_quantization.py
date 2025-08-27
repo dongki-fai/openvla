@@ -1,7 +1,7 @@
 from transformers import AutoModelForCausalLM
 from experiments.robot.robot_utils import get_model
 from transformers import AutoProcessor
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 
 import torch
 from PIL import Image
@@ -146,7 +146,7 @@ model = get_model(cfg)
 # llm = model.language_model
 llm = model.language_model.float() 
 # Get the processor
-processor = get_processor(cfg)
+processor = get_openvla_processor(cfg)
 
 # Dummy test
 dummy_image = Image.new("RGB", (256, 256), color="gray")

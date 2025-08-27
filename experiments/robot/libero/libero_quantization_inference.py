@@ -1,7 +1,7 @@
 from transformers import AutoModelForCausalLM
 from experiments.robot.robot_utils import get_model
 from transformers import AutoProcessor
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 
 import torch
 from PIL import Image
@@ -36,7 +36,7 @@ cfg = DummyConfig()
 print("[*] Loading full OpenVLA model...")
 model = get_model(cfg)
 
-processor = get_processor(cfg)
+processor = get_openvla_processor(cfg)
 
 
 quant_llm = AutoModelForCausalLM.from_pretrained(

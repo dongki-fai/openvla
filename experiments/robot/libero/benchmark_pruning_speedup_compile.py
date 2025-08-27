@@ -5,7 +5,7 @@ from torch.utils.benchmark import Timer
 from torch.profiler import profile, ProfilerActivity, record_function
 from torch import nn
 from torch import Tensor
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 from experiments.robot.robot_utils    import get_model
 from PIL import Image
 

@@ -9,7 +9,7 @@ from datasets import Dataset
 
 from transformers import AutoModelForCausalLM
 from experiments.robot.robot_utils import get_model
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_openvla_processor
 from experiments.robot.libero.libero_pruning import build_calibration_dataset_from_examples
 from experiments.robot.libero.libero_pruning import DummyConfig
 
@@ -324,7 +324,7 @@ if __name__ == "__main__":
     ]
 
     # Get the processor
-    processor = get_processor(cfg)
+    processor = get_openvla_processor(cfg)
 
     calib_data = build_calibration_dataset_from_examples(
         tfrecord_paths=tfrecord_paths,
