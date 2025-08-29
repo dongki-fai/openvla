@@ -40,12 +40,10 @@ MODEL_FAMILY = "worldvla" # Choose from "openvla", "cogact", "worldvla"
 BENCHMARK_NAME = "libero_spatial" # Choose from "libero_spatial", "libero_goal", "libero_object", "libero_10"
 CALIB_DATA_TYPE = "unprioritized-15k" # Just for naming the model
 # PRETRAINED_CHECKPOINT = "/home/ubuntu/pruning_vlas/models/openvla_models/openvla-7b-finetuned-libero-spatial"
-PRETRAINED_CHECKPOINT = "/home/ubuntu/pruning_vlas/models/worldvla_models/WorldVLA/model_256/libero_spatial"
-TFRECORD_DIR = "/home/ubuntu/pruning_vlas/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
+PRETRAINED_CHECKPOINT = f"/home/ubuntu/pruning_vlas/models/worldvla_models/WorldVLA/model_256/{BENCHMARK_NAME}"
+TFRECORD_DIR = f"/home/ubuntu/pruning_vlas/data/modified_libero_rlds/{BENCHMARK_NAME}_no_noops/1.0.0"
 # TFRECORD_DIR = "/home/ubuntu/pruning_vlas/data/closed_gripper_libero_rlds/libero_spatial_no_noops/1.0.0"
 # TFRECORD_DIR = "/home/ubuntu/pruning_vlas/data/closed_gripper_2_5_window_libero_rlds/libero_spatial_no_noops/1.0.0"
-
-
 
 PRUNING_MODIFIER = "Wanda"  # ["Wanda", "Magnitude", or "SparseGPT"]
 
@@ -57,7 +55,7 @@ PRUNE_FULL_MODEL = True
 IGNORE_SPECIFIC_LANGUAGE_LAYERS = False 
 # Half are: list(range(0, 16)) or list(range(16, 32))
 LANGUAGE_LAYERS_TO_IGNORE = list(range(16, 32))
-NUM_CALIB_SAMPLES = 10
+NUM_CALIB_SAMPLES = 500
 
 assert sum([PRUNE_VISION_BACKBONE, PRUNE_LANGUAGE_MODEL, PRUNE_FULL_MODEL]) == 1, \
     "Only one of PRUNE_* flags can be True at a time."
@@ -229,6 +227,9 @@ if __name__ == "__main__":
     model = get_model(cfg)
 
     model = model.float()  # ensure model is in float32 for calibration
+
+    if cfg.model_family == "worldvla":
+        model.is_calibrating = True   # For Pruning Calibration Model
 
     # Get the processor
     processor = get_processor(cfg)
