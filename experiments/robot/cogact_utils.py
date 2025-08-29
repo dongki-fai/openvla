@@ -29,6 +29,8 @@ def get_cogact_vla(cfg):
     model.to(DEVICE).eval()
     return model
 
+def get_cogact_model_inputs(image, task_label):
+    raise NotImplementedError("CogACT model input function not implemented.")
 
 def get_cogact_action(vla, obs, task_label, unnorm_key):
     """Generates an action with the VLA policy."""

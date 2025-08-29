@@ -11,15 +11,17 @@ def import_neccessary_libraries(model_family: str):
     """Imports neccessary libraries for a given model family."""
     if model_family == "openvla":
         from experiments.robot.openvla_utils import (
-            get_vla,
+            get_openvla,
             get_openvla_processor,
-            get_vla_action,
+            get_openvla_action,
+            get_openvla_model_inputs,
         )
         globals().update(locals())
     elif model_family == "cogact":
         from experiments.robot.cogact_utils import (
-            get_cogact_vla,
-            get_cogact_action
+            get_cogact,
+            get_cogact_action, 
+            get_cogact_model_inputs,
         )
         globals().update(locals())
     elif model_family == "worldvla":
@@ -28,13 +30,15 @@ def import_neccessary_libraries(model_family: str):
             get_worldvla_processor,
             get_worldvla_action, 
             unnorm_min_max_worldvla,
+            get_worldvla_model_inputs,
         )
         globals().update(locals())
     elif model_family == "molmoact":
         from experiments.robot.molmoact_utils import (
-            get_molmoact_vla,
+            get_molmoact,
             get_molmoact_processor,
-            get_molmoact_action
+            get_molmoact_action, 
+            get_molmoact_model_inputs,
         )
         globals().update(locals())
     else:
@@ -67,13 +71,13 @@ def set_seed_everywhere(seed: int):
 def get_model(cfg, wrap_diffusion_policy_for_droid=False):
     """Load model for evaluation."""
     if cfg.model_family == "openvla":
-        model = get_vla(cfg)
+        model = get_openvla(cfg)
     elif cfg.model_family == "cogact":
-        model = get_cogact_vla(cfg)
+        model = get_cogact(cfg)
     elif cfg.model_family == "worldvla":
         model = get_worldvla(cfg)
     elif cfg.model_family == "molmoact":
-        model = get_molmoact_vla(cfg)
+        model = get_molmoact(cfg)
     else:
         raise ValueError("Unexpected `model_family` found in config.")
     print(f"Loaded model: {type(model)}")
@@ -111,9 +115,7 @@ def get_image_resize_size(cfg):
 def get_action(cfg, model, obs, task_label, processor=None):
     """Queries the model to get an action."""
     if cfg.model_family == "openvla":
-        action = get_vla_action(
-            model, processor, cfg.pretrained_checkpoint, obs, task_label, cfg.unnorm_key, center_crop=cfg.center_crop
-        )
+        action = get_openvla_action(model, processor,  obs, task_label, cfg.unnorm_key, center_crop=cfg.center_crop)
         assert action.shape == (ACTION_DIM,)
     elif cfg.model_family == "cogact":
         action = get_cogact_action(model, obs, task_label, cfg.unnorm_key)
@@ -124,6 +126,22 @@ def get_action(cfg, model, obs, task_label, processor=None):
     else:
         raise ValueError("Unexpected `model_family` found in config.")
     return action
+
+
+def get_model_inputs(cfg, image, instruction, processor=None, history_image=[]):
+
+    if cfg.model_family == "openvla":
+        inputs = get_openvla_model_inputs(image, instruction, processor)
+    elif cfg.model_family == "cogact":
+        inputs = get_cogact_model_inputs(image, instruction)
+    elif cfg.model_family == "worldvla":
+        inputs = get_worldvla_model_inputs(image, instruction, processor, history_image=history_image)
+    elif cfg.model_family == "molmoact":
+        inputs = get_molmoact_model_inputs(image, instruction, processor)
+    else:
+        raise ValueError("Model Input Retriever Not Implemented for the Model Family.")
+
+    return inputs 
 
 def post_process_action(cfg, action):
 

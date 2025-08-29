@@ -58,7 +58,7 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 
 # SparseSemiStructuredTensor.from_dense = classmethod(patched_from_dense)
 
-def get_vla(cfg):
+def get_openvla(cfg):
     """Loads and returns a VLA model from checkpoint."""
     # Load VLA checkpoint.
     print("[*] Instantiating Pretrained VLA model")
@@ -222,10 +222,7 @@ def crop_and_resize(image, crop_scale, batch_size):
     return image
 
 
-def get_vla_action(vla, processor, base_vla_name, obs, task_label, unnorm_key, center_crop=False):
-    """Generates an action with the VLA policy."""
-    image = Image.fromarray(obs["full_image"])
-    image = image.convert("RGB")
+def get_openvla_model_inputs(image, task_label, processor, center_crop=False):
 
     # (If trained with image augmentations) Center crop image and then resize back up to original size.
     # IMPORTANT: Let's say crop scale == 0.9. To get the new height and width (post-crop), multiply
@@ -252,16 +249,27 @@ def get_vla_action(vla, processor, base_vla_name, obs, task_label, unnorm_key, c
         image = Image.fromarray(image.numpy())
         image = image.convert("RGB")
 
-    # Build VLA prompt
-    if "openvla-v01" in base_vla_name:  # OpenVLA v0.1
-        prompt = (
-            f"{OPENVLA_V01_SYSTEM_PROMPT} USER: What action should the robot take to {task_label.lower()}? ASSISTANT:"
-        )
-    else:  # OpenVLA
-        prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut:"
+    # # Build VLA prompt
+    # if "openvla-v01" in base_vla_name:  # OpenVLA v0.1
+    #     prompt = (
+    #         f"{OPENVLA_V01_SYSTEM_PROMPT} USER: What action should the robot take to {task_label.lower()}? ASSISTANT:"
+    #     )
+    # else:  # OpenVLA
+    prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut:"
 
     # Process inputs.
     inputs = processor(prompt, image).to(DEVICE, dtype=torch.bfloat16)
+
+    return inputs
+
+
+def get_openvla_action(vla, processor, obs, task_label, unnorm_key, center_crop=False):
+    """Generates an action with the VLA policy."""
+
+    image = Image.fromarray(obs["full_image"])
+    image = image.convert("RGB")
+
+    inputs = get_openvla_model_inputs(image, task_label, processor, center_crop=center_crop)
 
     # normal vla model
     action = vla.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False, use_cache=True)

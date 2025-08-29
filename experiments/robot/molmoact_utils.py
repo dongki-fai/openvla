@@ -32,6 +32,9 @@ def get_molmoact_processor(cfg):
     )
     return processor
 
+def get_molmoact_model_inputs(image, task_label, processor):
+    raise NotImplementedError("MolmoAct model input function not implemented.")
+
 def get_molmoact_action(vla, processor, obs, task_label):
     """Generates an action with the VLA policy."""
     image = Image.fromarray(obs["full_image"])

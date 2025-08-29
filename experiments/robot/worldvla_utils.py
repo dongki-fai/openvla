@@ -40,30 +40,39 @@ def unnorm_min_max_worldvla(action):
     
     return unnorm_action
 
+def get_worldvla_model_inputs(current_image, task_label, processor, history_image=[]):
+
+    prompt = task_label.lower()
+
+    conv = {
+        "conversations":[
+            {
+                "from": "human",
+                "value": "What action should the robot take to " + prompt + "?" + "<|image|>" * len(history_image[-1:]) + "<|image|>"
+            },
+        ],
+        "image": history_image[-1:] + [current_image],
+        "action": [],
+    }
+
+    tokens = processor.process_item(conv, training_mode=False)
+
+    input_ids = torch.tensor(tokens, dtype=torch.int64, device=DEVICE).unsqueeze(0)
+
+    return input_ids
+
+
 def get_worldvla_action(vla, obs, task_label, processor, history_type, action_steps):
 
     current_image = obs['full_image']
     history_image = obs['history_image']  # already a list of PIL.Image
     current_image = Image.fromarray(current_image)
 
-    prompt = task_label.lower()
-
-    if history_type == "2h_1a_img_only":
-        conv = {
-                "conversations":[
-                    {
-                        "from": "human",
-                        "value": "What action should the robot take to " + prompt + "?" + "<|image|>" * len(history_image[-1:]) + "<|image|>"
-                    },
-                ],
-                "image": history_image[-1:] + [current_image],
-                "action": [],
-                }
-    else:
+    if history_type != "2h_1a_img_only":
         raise NotImplementedError("History type not integrated. Please refer back to https://github.com/alibaba-damo-academy/WorldVLA/blob/3b71772b739dab954262a1e07193d34b6b53a3ba/worldvla/libero_util/Chameleon_utils.py#L386")
-
-    tokens = processor.process_item(conv, training_mode=False)
     
+    input_ids = get_worldvla_model_inputs(current_image, task_label, processor, history_image)
+
     generation_config = GenerationConfig(max_new_tokens=action_steps*12,
                                         max_length=vla.config.max_position_embeddings,
                                         temperature=1,
@@ -71,10 +80,6 @@ def get_worldvla_action(vla, obs, task_label, processor, history_type, action_st
                                         do_sample=False,
                                         eos_token_id=[8710],
                                     )
-    if 'img_only' in history_type:
-        input_ids = torch.tensor(tokens, dtype=torch.int64, device=vla.device).unsqueeze(0)
-    else:
-        raise NotImplementedError("History type not integrated.")
 
     dis_action = vla.generate_dis_ma(input_ids, generation_config)
     
