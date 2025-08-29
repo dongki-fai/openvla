@@ -261,7 +261,7 @@ if __name__ == "__main__":
     if PRUNING_MODIFIER == "Wanda":
         pruner = WandaPruningModifier(
             targets="Linear",
-            sequential_targets=["ChameleonDecoderLayer"],  # correct block type
+            sequential_targets=["ChameleonDecoderLayer"],  # TODO: Only for WorldVLA
             sparsity=0.5,
             mask_structure="2:4",
             ignore=ignore,
