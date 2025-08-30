@@ -6,25 +6,68 @@ import gc
 
 SparseSemiStructuredTensor._FORCE_CUTLASS = True
 
+
+
+
+# class SparseSVDFusedWrap(nn.Module):
+#     def __init__(self, linear, V, U_T):
+#         super().__init__()
+#         self.linear = linear
+#         self.register_buffer("V", V.contiguous())
+#         self.register_buffer("U_T", U_T.contiguous())
+
+#     # @torch._dynamo.disable()
+#     # def _clone_outside_compile(self, t: torch.Tensor) -> torch.Tensor:
+#     #     return t.clone()
+    
+#     def forward(self, x):
+#         y = F.linear(x, self.linear.weight, self.linear.bias)
+#         tmp = (x @ self.V) @ self.U_T
+#         return torch.add(y, tmp)  
+#         # out = y + tmp
+#         # return self._clone_outside_compile(out)
+    
+
+def quantize_tensor(t: torch.Tensor, num_bits=8):
+    """
+    Symmetric linear quantization of a tensor.
+    Supports int8.
+    """
+    qmin = -(2**(num_bits-1))
+    qmax = (2**(num_bits-1)) - 1
+
+    # Compute scale (per tensor; can be per-channel for better accuracy)
+    max_val = t.abs().max()
+    scale = max_val / float(qmax)
+
+    # Quantize to integers
+    q = torch.clamp((t / scale).round(), qmin, qmax)
+
+    q = q.to(torch.int8)
+
+    return q, scale
+
 class SparseSVDFusedWrap(nn.Module):
-    def __init__(self, linear, V, U_T):
+    def __init__(self, linear, V_q, V_scale, U_T_q, U_T_scale):
         super().__init__()
         self.linear = linear
-        self.register_buffer("V", V.contiguous())
-        self.register_buffer("U_T", U_T.contiguous())
+        self.register_buffer("V_q", V_q.contiguous())
+        self.register_buffer("U_T_q", U_T_q.contiguous())
+        self.register_buffer("V_scale", torch.tensor(V_scale, dtype=torch.float32))
+        self.register_buffer("U_T_scale", torch.tensor(U_T_scale, dtype=torch.float32))
 
-    # @torch._dynamo.disable()
-    # def _clone_outside_compile(self, t: torch.Tensor) -> torch.Tensor:
-    #     return t.clone()
-    
     def forward(self, x):
         y = F.linear(x, self.linear.weight, self.linear.bias)
-        tmp = (x @ self.V) @ self.U_T
+
+        # dequantize on the fly
+        V = (self.V_q.float() * self.V_scale).to(x.dtype)
+        U_T = (self.U_T_q.float() * self.U_T_scale).to(x.dtype)
+
+        tmp = (x @ V) @ U_T
+        # y.add_(tmp)
         return torch.add(y, tmp)  
-        # out = y + tmp
-        # return self._clone_outside_compile(out)
-    
-    
+
+
 def is_layer_pruning_enabled(module, layer_name, filter_for=None, skip_layers=None):
     """
     Check if layer pruning is enabled for a specific layer.
@@ -37,6 +80,7 @@ def is_layer_pruning_enabled(module, layer_name, filter_for=None, skip_layers=No
     if isinstance(module, nn.Linear): #and "layer" in fqn:
         if (filter_for is not None) and (filter_for in layer_name):
             if skip_layers and any(skip_layer in layer_name for skip_layer in skip_layers):
+                print("Skipping layer:", layer_name)
                 return False
             if module.weight.shape[0] % 32 == 0 and module.weight.shape[1] % 64 == 0:
                 return True
@@ -49,7 +93,7 @@ def attach_sparse_kernel(model, filter_for=None, skip_layers=None):
 
     for layer_name, module in model.named_modules():
         if is_layer_pruning_enabled(module, layer_name, filter_for, skip_layers):
-            # print(f"Converting {layer_name} to sparse semi-structured")
+            print(f"Converting {layer_name} to sparse semi-structured")
             # module.weight = nn.Parameter(to_sparse_semi_structured(module.weight))
             old_weight = module.weight.detach()
             sparse_weight = to_sparse_semi_structured(old_weight)
@@ -77,9 +121,18 @@ def wrap_linears_with_svd(model, svd_factors_path, filter_for=None, skip_layers=
                 # print(f"Skipping {name} as no SVD factors found.")
                 continue
 
-            # Grab factors for this layer
-            V = svd_factors[name]["V"].to(device=device, dtype=dtype)
-            U_T = svd_factors[name]["U_T"].to(device=device, dtype=dtype)
+            # # Grab factors for this layer
+            # V = svd_factors[name]["V"].to(device=device, dtype=dtype)
+            # U_T = svd_factors[name]["U_T"].to(device=device, dtype=dtype)
+
+            V = svd_factors[name]["V"].to("cpu")  # load in float
+            U_T = svd_factors[name]["U_T"].to("cpu")
+
+            V_q, V_scale = quantize_tensor(V, num_bits=8)
+            U_T_q, U_T_scale = quantize_tensor(U_T, num_bits=8)
+
+            V_q = V_q.to(device)
+            U_T_q = U_T_q.to(device)
 
             # Replace module in parent
             parent_name = ".".join(name.split(".")[:-1])
@@ -87,7 +140,7 @@ def wrap_linears_with_svd(model, svd_factors_path, filter_for=None, skip_layers=
             parent = model.get_submodule(parent_name)
 
             setattr(parent, child_name,
-                    SparseSVDFusedWrap(module, V, U_T))
+                    SparseSVDFusedWrap(module, V_q, V_scale, U_T_q, U_T_scale))
             # print(f"[+] Wrapped {name} with SparseSVDFusedWrap")
 
     print("[✓] Wrapped all applicable Linear layers with SparseSVDFusedWrap.")

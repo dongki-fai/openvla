@@ -6,7 +6,8 @@ from torch.profiler import profile, ProfilerActivity, record_function
 from torch import nn
 from torch import Tensor
 from experiments.robot.openvla_utils import get_openvla_processor
-from experiments.robot.robot_utils    import get_model
+from experiments.robot.robot_utils    import get_model, import_neccessary_libraries
+from experiments.robot.pruning_utils import quantize_tensor, SparseSVDFusedWrap
 from PIL import Image
 
 import torch._dynamo as dynamo
@@ -140,7 +141,6 @@ def profile_sparse_and_SVD_layer(linear: nn.Module, x: Tensor, V: Tensor, U_T: T
     # return linear(x).add(ys)
     return torch.addmm(linear(x), x, U_T, beta=1.0, alpha=1.0)
 
-
 class DenseWrap(nn.Module):
     def __init__(self, linear): 
         super().__init__()
@@ -153,19 +153,7 @@ class SparseOnlyWrap(nn.Module):
         super().__init__()
         self.linear = linear
     def forward(self, x): 
-        return self.linear(x)  # weight already 2:4
-
-class SparseSVDFusedWrap(nn.Module):
-    def __init__(self, linear, V, U_T):
-        super().__init__()
-        self.linear = linear
-        self.register_buffer("V", V.contiguous())
-        self.register_buffer("U_T", U_T.contiguous())
-    def forward(self, x):
-        y = F.linear(x, self.linear.weight, self.linear.bias)
-        tmp = (x @ self.V) @ self.U_T
-        # y.add_(tmp)
-        return torch.add(y, tmp)  
+        return self.linear(x)  # weight already 2:4 
     
 def run_torch_profiling(model, layer_name, mode, rank=1, device="cuda", batch_size=400):
 
@@ -255,7 +243,10 @@ def run_torch_profiling(model, layer_name, mode, rank=1, device="cuda", batch_si
         V = Vh_r.t().contiguous()               
         U_T = U_scaled.t().contiguous()   
 
-        svd_mod = torch.compile(SparseSVDFusedWrap(linear, V, U_T), mode="max-autotune")
+        V_q, V_scale = quantize_tensor(V)
+        U_T_q, U_T_scale = quantize_tensor(U_T)
+
+        svd_mod = torch.compile(SparseSVDFusedWrap(linear, V_q, V_scale, U_T_q, U_T_scale), mode="max-autotune")
 
         ## -- Warm Up --
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True) as prof:
@@ -279,9 +270,13 @@ def run_torch_profiling(model, layer_name, mode, rank=1, device="cuda", batch_si
         return get_cuda_time(prof_svd_sparse, "profile_sparse_and_SVD_layer")
 
 if __name__ == "__main__":
+
+
     # 0) load pruned model + processor
-    model_directory = "/workspace/models/openvla-7b-GOAL-pruned-2_4-Wanda-pruned-language_backbone-15k-ORIGINAL"
-    cfg   = DummyConfig() #(pretrained_checkpoint=model_directory)
+    model_directory = "/home/ubuntu/pruning_vlas/models/openvla_models/openvla-7b-libero-spatial-pruned-2_4-Wanda-language_backbone-calibset-5TotalWindowGripperClosing"
+    cfg   = DummyConfig(pretrained_checkpoint=model_directory)
+    import_neccessary_libraries(cfg.model_family)
+
     model = get_model(cfg)
     model = model.float() 
     model = model.to("cuda") 

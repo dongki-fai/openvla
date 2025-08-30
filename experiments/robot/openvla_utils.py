@@ -100,13 +100,15 @@ def get_openvla(cfg):
     if cfg.pruned_inference:
         FILTER_FOR = 'language_model'  
         SKIP_LAYERS = ['vision_backbone', 'lm_head', 'projector']
-        from experiments.robot.pruning_utils import attach_sparse_kernel, wrap_linears_with_svd
+        # SKIP_LAYERS += ["." + str(i) + "." for i in range(16,32)]  # Skip first 16 layers of language model
 
+        from experiments.robot.pruning_utils import attach_sparse_kernel, wrap_linears_with_svd
+        # print(SKIP_LAYERS)
         # Attach sparse kernel
         vla = attach_sparse_kernel(vla, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS)
 
         # Load SVD factors and wrap linears
-        svd_factors_path = "/workspace/models/svd_factors_libero_spatial_lb_5total/svd_factors_rank_500.pt"
+        svd_factors_path = "/home/ubuntu/pruning_vlas/models/openvla_models/svd_factors_libero_spatial_lb_5TotalGripperClosing/svd_factors_rank_500.pt"
         vla = wrap_linears_with_svd(vla, svd_factors_path, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS, dtype=torch.bfloat16, device="cuda")
 
     # # TODO: Implement this cleanly
