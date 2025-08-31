@@ -108,8 +108,8 @@ def get_openvla(cfg):
         vla = attach_sparse_kernel(vla, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS)
 
         # Load SVD factors and wrap linears
-        svd_factors_path = "/home/ubuntu/pruning_vlas/models/openvla_models/svd_factors_libero_spatial_lb_5TotalGripperClosing/svd_factors_rank_500.pt"
-        vla = wrap_linears_with_svd(vla, svd_factors_path, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS, dtype=torch.bfloat16, device="cuda")
+        if cfg.svd_factors_path is not None:
+            vla = wrap_linears_with_svd(vla, cfg.svd_factors_path, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS, dtype=torch.bfloat16, device="cuda")
 
     # # TODO: Implement this cleanly
     # PRUNE_BACKBONE_ONLY = True

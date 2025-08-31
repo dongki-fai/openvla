@@ -69,7 +69,7 @@ class GenerateConfig:
     load_in_4bit: bool = False                       # (For OpenVLA only) Load with 4-bit quantization
     pruned_inference: bool = False                    # Whether to prune the model (not used in this script)
     load_to_cpu: bool = False                       # Load model to CPU (if True, will not load to GPU even if available)
-
+    svd_factors_path: Optional[Union[str, Path]] = None  # (For OpenVLA only) Path to SVD factors for inference-time low-rank approximation
     center_crop: bool = True                         # Center crop? (if trained w/ random crop image aug)
 
     #################################################################################################################
