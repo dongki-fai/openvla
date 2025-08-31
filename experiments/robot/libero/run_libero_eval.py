@@ -283,8 +283,11 @@ def eval_libero(cfg: GenerateConfig) -> None:
                                 task_description,
                                 processor=processor,
                             )
-                        action = action_chunk.pop(0)
-        
+                        if len(action_chunk) != 0:
+                            action = action_chunk.pop(0)
+                        else:
+                            # keep last action
+                            action = action 
 
                     if cfg.model_family == "cogact" and cfg.ensembler:
                         action = ensembler.ensemble_action(action)

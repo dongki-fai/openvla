@@ -100,7 +100,7 @@ def get_openvla(cfg):
     if cfg.pruned_inference:
         FILTER_FOR = 'language_model'  
         SKIP_LAYERS = ['vision_backbone', 'lm_head', 'projector']
-        # SKIP_LAYERS += ["." + str(i) + "." for i in range(16,32)]  # Skip first 16 layers of language model
+        # SKIP_LAYERS += ["." + str(i) + "." for i in range(24,32)]  # Skip first 16 layers of language model
 
         from experiments.robot.pruning_utils import attach_sparse_kernel, wrap_linears_with_svd
         # print(SKIP_LAYERS)
