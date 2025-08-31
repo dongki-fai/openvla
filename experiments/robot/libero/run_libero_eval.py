@@ -109,7 +109,7 @@ class GenerateConfig:
     # WorldVLA-specific parameters
     #################################################################################################################
     history_type: str = "2h_1a_img_only"             # Type of history to use. We have only integrated 2h_1a_img_only from WorldVLA
-    action_steps: int = 25                           # Actions to be excuted when multiple actions are generated
+    action_steps: int = 1                           # Actions to be excuted when multiple actions are generated
 
 
 @draccus.wrap()
@@ -276,13 +276,19 @@ def eval_libero(cfg: GenerateConfig) -> None:
                     # TODO: Integrate this in a cleaner way
                     elif cfg.model_family == "worldvla":
                         if len(action_chunk) == 0:
-                            action_chunk = get_action(
-                                cfg,
-                                model,
-                                observation,
-                                task_description,
-                                processor=processor,
-                            )
+                            try: 
+                                action_chunk = get_action(
+                                    cfg,
+                                    model,
+                                    observation,
+                                    task_description,
+                                    processor=processor,
+                                )
+                            # Pass if there is an error in action generation
+                            except Exception as e:
+                                print(f"Caught exception when generating action chunk: {e}")
+                                log_file.write(f"Caught exception when generating action chunk: {e}\n")
+                                pass
                         if len(action_chunk) != 0:
                             action = action_chunk.pop(0)
                         else:
