@@ -151,7 +151,7 @@ def compile_linears(model):
 
     print("[*] Compiling Linear layers...")
     for name, module in model.named_modules():
-        if isinstance(module, SparseSVDFusedWrap):
+        if isinstance(module, SparseSVDFusedWrap) or isinstance(module, nn.Linear):
             parent_name = ".".join(name.split(".")[:-1])
             child_name = name.split(".")[-1]
             parent = model.get_submodule(parent_name)
