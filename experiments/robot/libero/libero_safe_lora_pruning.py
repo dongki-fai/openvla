@@ -187,7 +187,7 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
 # Load the pruned OpenVLA model
 print("[*] Loading pruned OpenVLA model...")
-path_to_pruned_model = "/workspace/models/openvla-7b-libero-spatial-pruned-2_4-Wanda-language_backbone-calibset-5TotalWindowGripperClosing"
+path_to_pruned_model = "/workspace/models/openvla-7b-pruned-2_4-Wanda-pruned-language_backbone-calibset-ORIGINAL-15000"
 cfg = DummyConfig(path_to_pruned_model)
 import_neccessary_libraries(cfg.model_family)
 pruned_model = get_model(cfg)
