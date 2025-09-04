@@ -7,10 +7,11 @@ from torch import nn
 from transformers import AutoModelForCausalLM
 
 from transformers import AutoModelForCausalLM
-from experiments.robot.robot_utils import get_model
+from experiments.robot.robot_utils import get_model, import_neccessary_libraries
 
 
-RANK = 1  # Number of components to keep for nudging
+RANK = 500  # Number of components to keep for nudging
+MODEL_FAMILY = "worldvla"
 # IGNORE_SPECIFIC_LANGUAGE_LAYERS = True
 # LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
 CHOOSE_SINGULAR_VALUES_BY = 'Magnitude' # 'Magnitude' or 'Random'
@@ -24,8 +25,8 @@ SVD_FACTORS = {}  # Dictionary to hold singular value factors for each layer
 
 # Setup dummy config with checkpoint
 class DummyConfig():
-    def __init__(self, pretrained_checkpoint):
-        self.model_family = "openvla"
+    def __init__(self, model_family, pretrained_checkpoint):
+        self.model_family = model_family
         self.pretrained_checkpoint = pretrained_checkpoint
         self.load_in_8bit = False
         self.load_in_4bit = False
@@ -179,17 +180,20 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
 # Load the pruned OpenVLA model
 print("[*] Loading pruned OpenVLA model...")
-path_to_pruned_model = "/workspace/models/openvla-7b-pruned-2_4-Wanda-pruned-language_backbone-calibset-5TotalWindowGripper"
-cfg = DummyConfig(path_to_pruned_model)
+path_to_pruned_model = "/home/ubuntu/pruning_vlas/models/worldvla_models/WorldVLA-7b-libero-pruned-2_4-Wanda-language_backbone-Data-closing_gripper/model_256/libero_spatial"
+cfg = DummyConfig(MODEL_FAMILY, path_to_pruned_model)
+import_neccessary_libraries(cfg.model_family)
 pruned_model = get_model(cfg)
 pruned_model = pruned_model.float()
+pruned_model = pruned_model.to("cpu")
 
 print("[*] Loading dense OpenVLA model...")
-path_to_dense_model = "/workspace/models/openvla-7b-finetuned-libero-spatial"
+path_to_dense_model = "/home/ubuntu/pruning_vlas/models/worldvla_models/WorldVLA/model_256/libero_spatial"
 # path_to_dense_model = "/workspace/openvla/pruned_model_nudged"
-cfg = DummyConfig(path_to_dense_model)
+cfg = DummyConfig(MODEL_FAMILY, path_to_dense_model)
 dense_model = get_model(cfg)
 dense_model = dense_model.float()
+dense_model = dense_model.to("cpu")
 
 nudge_and_save(pruned_model, dense_model, device='cuda')
 
@@ -206,5 +210,3 @@ pdb.set_trace()
 # print(f"Shape of C: {C.shape}")
 # print(f"Rank of C: {torch.linalg.matrix_rank(C)}")
 # --- C is actually not a rank 1 matrix, but very high rank ---
-
-

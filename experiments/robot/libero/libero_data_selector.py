@@ -5,13 +5,13 @@ import tensorflow as tf
 from sklearn.cluster import KMeans
 
 # ---- Config ----
-IN_ROOT  = "/workspace/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
-OUT_ROOT = IN_ROOT.replace("modified_libero_rlds", "closing_and_opening_gripper_libero_rlds")
+IN_ROOT  = "/home/ubuntu/pruning_vlas/data/modified_libero_rlds/libero_spatial_no_noops/1.0.0"
+OUT_ROOT = IN_ROOT.replace("modified_libero_rlds", "spatial_closing_gripper_libero_rlds")
 GRIPPER_CLOSED_VAL = 1.0          # action[-1] == 1.0 => closed
 PAD_FRAC            = 0.025       # 5% padding on both sides
 ACTION_DIM, STATE_DIM, JOINT_DIM = 7, 8, 7
 SKIP_EMPTY_EPISODES  = True
-SLICE_MODE = 'cluster'  # 'full', 'window', or 'cluster'
+SLICE_MODE = 'window'  # 'full', 'window', or 'cluster'
 CLUSTER_K  = 7          # how many k‑means clusters
 CLUSTER_M  = 2000       # max samples per cluster
 os.makedirs(OUT_ROOT, exist_ok=True)

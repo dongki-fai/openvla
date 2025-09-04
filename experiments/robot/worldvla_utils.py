@@ -24,6 +24,23 @@ def get_worldvla(cfg):
     )
 
     model.to(DEVICE).eval()
+
+    ## TODO: Implement this cleanly
+    if cfg.pruned_inference:
+        FILTER_FOR = 'model.layers'  
+        SKIP_LAYERS = ['vqmodel', 'lm_head', 'projector']
+        # SKIP_LAYERS += ["." + str(i) + "." for i in range(24,32)]  # Skip first 16 layers of language model
+
+        from experiments.robot.pruning_utils import attach_sparse_kernel, wrap_linears_with_svd
+        # print(SKIP_LAYERS)
+        # Attach sparse kernel
+        model = attach_sparse_kernel(model, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS)
+
+        # Load SVD factors and wrap linears
+        if cfg.svd_factors_path is not None:
+            model = wrap_linears_with_svd(model, cfg.svd_factors_path, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS, dtype=torch.bfloat16, device="cuda")
+
+
     return model
 
 def get_worldvla_processor(cfg, target_size=256):
