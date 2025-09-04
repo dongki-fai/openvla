@@ -13,7 +13,7 @@ from datasets import Dataset
 from tqdm.auto import tqdm
 import pdb
 
-from experiments.robot.robot_utils import get_model
+from experiments.robot.robot_utils import get_model, get_processor, import_neccessary_libraries
 from experiments.robot.openvla_utils import get_openvla_processor
 from experiments.robot.pruning_utils import attach_sparse_kernel, wrap_linears_with_svd, compile_linears
 
@@ -86,8 +86,9 @@ def register_linear_input_hooks(model):
                     # take the input tensor to this Linear and detach from autograd graph
                     x = input[0].detach()
 
-                    # print(f"Captured input for layer {layer_name}:")
-                    # print("Input Shape:", input[0].shape)
+                    # if "model.layers.18.self_attn.q_proj" in layer_name:
+                    #     print(f"Captured input for layer {layer_name}:")
+                    #     print("Input Shape:", input[0].shape)
                     # print("Output Shape:", output.shape)
                     # --------- skip prefill ----------
                     if x.shape[1] > 1:         # S > 1 ⇒ prefill
@@ -110,10 +111,11 @@ def run_model(model, tfrecord_paths, processor, num_samples, seed=42):
 
     model.to("cuda")
 
-    # handles, buffers = register_linear_input_hooks(model)
+    handles, buffers = register_linear_input_hooks(model)
 
     pbar = tqdm(total=num_samples, desc="Inference", unit="sample")
 
+    avg_inference_time = 0.0
     for image, instruction in input_generator(tfrecord_paths, seed=seed):
 
         if inference_count >= num_samples:
@@ -122,11 +124,11 @@ def run_model(model, tfrecord_paths, processor, num_samples, seed=42):
         inputs = processor(images=image, text=instruction, return_tensors="pt")
         inputs.to("cuda").to(torch.float16)
         start_time = time.time()
-        action = model.predict_action(**inputs)
+        action = model.predict_action(**inputs, use_cache=False)
         end_time = time.time()
         print(f"Action: {action}")
         print(f"Inference Time: {end_time - start_time:.4f} seconds")
-
+        avg_inference_time += (end_time - start_time)
         inference_count += 1
         pbar.update(1)
 
@@ -136,6 +138,8 @@ def run_model(model, tfrecord_paths, processor, num_samples, seed=42):
     # for h in handles: 
     #     h.remove()
 
+    print(f"Average Inference Time: {avg_inference_time / num_samples:.4f} seconds")
+
     # del buffers, handles
     # torch.cuda.empty_cache()
 
@@ -144,14 +148,17 @@ if __name__ == "__main__":
 
     print("[*] Loading dense OpenVLA model...")
     path_to_model = "/workspace/models/openvla-7b-finetuned-libero-spatial"
-    path_to_model = "/workspace/models/openvla-7b-pruned-2_4-Wanda-pruned-language_backbone-calibset-5TotalWindowGripper"
+    # path_to_model = "/workspace/models/openvla-7b-pruned-2_4-Wanda-pruned-language_backbone-calibset-5TotalWindowGripper"
     cfg = DummyConfig(path_to_model)
+    cfg.use_cache = False
+    import_neccessary_libraries(cfg.model_family)
+
     model = get_model(cfg)
     # Convert model to float16 for inference
     model = model.to(torch.float16)
 
     # Get the processor
-    processor = get_openvla_processor(cfg)
+    processor = get_processor(cfg)
 
     tfrecord_dir = "/workspace/data/closed_gripper_2_5_window_libero_rlds/libero_spatial_no_noops/1.0.0"
     tfrecord_paths = [
@@ -160,21 +167,21 @@ if __name__ == "__main__":
         if ".tfrecord" in f
     ]
 
-    # Attach sparse kernel
-    model = attach_sparse_kernel(model, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS)
+    # # Attach sparse kernel
+    # model = attach_sparse_kernel(model, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS)
 
-    # Load SVD factors and wrap linears
-    svd_factors_path = "/workspace/models/svd_factors_libero_spatial_lb_5total/svd_factors_rank_200.pt"
-    model = wrap_linears_with_svd(model, svd_factors_path, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS, dtype=torch.float16, device="cuda")
+    # # Load SVD factors and wrap linears
+    # svd_factors_path = "/workspace/models/svd_factors_libero_spatial_lb_5total/svd_factors_rank_200.pt"
+    # model = wrap_linears_with_svd(model, svd_factors_path, filter_for=FILTER_FOR, skip_layers=SKIP_LAYERS, dtype=torch.float16, device="cuda")
 
     # Compile the Model
     # model = torch.compile(model, mode="max-autotune")
-    # model = compile_linears(model)
+    model = compile_linears(model)
 
     run_model(
         model=model,
         tfrecord_paths=tfrecord_paths,
         processor=processor,
-        num_samples=1000,
+        num_samples=100,
     )
 

@@ -16,9 +16,10 @@ MODEL_FAMILY = "worldvla"
 # LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
 CHOOSE_SINGULAR_VALUES_BY = 'Magnitude' # 'Magnitude' or 'Random'
 TOTALLY_REPLACE_PRUNED_WEIGHTS = False  # Whether to replace pruned weights with nudged weights or add them
-SAVE_SINGULAR_VALUES_SEPARATELY = True  # Whether to save singular values separately
+SAVE_SINGULAR_VALUES_SEPARATELY = False  # Whether to save singular values separately
 SAVE_SINGULAR_VALUES_TO_CSV = False 
 SAVE_RANDOM_INDICES = False
+SWAP_WEIGHTS = True                      # Place Specific Dense Layers into Pruned Model
 
 
 SVD_FACTORS = {}  # Dictionary to hold singular value factors for each layer
@@ -77,6 +78,13 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
 
                 Wp = module.weight
                 Wd = dense_sd[name + ".weight"].to(device_gpu)
+
+                if SWAP_WEIGHTS:
+                    dense_layers_to_place_into_pruned = ["." + str(i) + "." for i in range(0,8)]
+                    if any(swap_layer in name for swap_layer in dense_layers_to_place_into_pruned):
+                        module.weight.data = Wd
+                        print(f"Dense {name} placed into pruned model.")
+                    continue
 
                 if not TOTALLY_REPLACE_PRUNED_WEIGHTS:
                     print(f"Checking Safety Gap for {name}")
