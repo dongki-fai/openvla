@@ -16,10 +16,10 @@ MODEL_FAMILY = "worldvla"
 # LANGUAGE_LAYERS_TO_IGNORE = list(range(0, 16))
 CHOOSE_SINGULAR_VALUES_BY = 'Magnitude' # 'Magnitude' or 'Random'
 TOTALLY_REPLACE_PRUNED_WEIGHTS = False  # Whether to replace pruned weights with nudged weights or add them
-SAVE_SINGULAR_VALUES_SEPARATELY = False  # Whether to save singular values separately
+SAVE_SINGULAR_VALUES_SEPARATELY = True  # Whether to save singular values separately
 SAVE_SINGULAR_VALUES_TO_CSV = False 
 SAVE_RANDOM_INDICES = False
-SWAP_WEIGHTS = True                      # Place Specific Dense Layers into Pruned Model
+SWAP_WEIGHTS = False                      # Place Specific Dense Layers into Pruned Model
 
 
 SVD_FACTORS = {}  # Dictionary to hold singular value factors for each layer
