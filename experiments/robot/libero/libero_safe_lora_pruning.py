@@ -23,6 +23,7 @@ SWAP_WEIGHTS = True                      # Place Specific Dense Layers into Prun
 
 
 SVD_FACTORS = {}  # Dictionary to hold singular value factors for each layer
+SKIP_LAYERS = ['lm_head']
 
 # Setup dummy config with checkpoint
 class DummyConfig():
@@ -61,7 +62,7 @@ def nudge_and_save(pruned_model, dense_model, save_dir='pruned_model_nudged', ta
     # Perform patch under no_grad to avoid in-place grad errors
     with torch.no_grad():
         for name, module in pruned_model.named_modules():
-            if isinstance(module, nn.Linear):
+            if isinstance(module, nn.Linear) and any(skip_layer not in name for skip_layer in SKIP_LAYERS):
 
                 # if IGNORE_SPECIFIC_LANGUAGE_LAYERS: 
                 #     if "language_model" in name:
