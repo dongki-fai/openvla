@@ -3,7 +3,6 @@
 from PIL import Image
 import torch
 import numpy as np
-from vla import load_vla as load_cogact
 
 from worldvla.model import ChameleonXLLMXForConditionalGeneration_ck as WorldVLA_Loader
 from worldvla.data.pre_tokenize_action import ItemProcessor
