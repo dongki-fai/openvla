@@ -89,6 +89,9 @@ def get_worldvla_action(vla, obs, task_label, processor, history_type, action_st
     
     input_ids = get_worldvla_model_inputs(current_image, task_label, processor, history_image)
 
+    # Force config pad token
+    # vla.config.pad_token_id = 8710
+
     generation_config = GenerationConfig(max_new_tokens=action_steps*12,
                                         max_length=vla.config.max_position_embeddings,
                                         temperature=1,
