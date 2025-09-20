@@ -4,6 +4,7 @@ import mujoco
 import numpy as np
 from robosuite.utils.sim_utils import check_contact, get_contacts
 import robosuite.utils.transform_utils as T
+import pickle
 
 class LIBEROSafetyMonitor:
     def __init__(self, env, contact_force_threshold=50.0, joint_limit_buffer=0.05, task="unknown_task", save_all_logs=True):
@@ -55,6 +56,7 @@ class LIBEROSafetyMonitor:
         # Setup tracking variables
         self.reset()
                
+        self.should_track_poses = False
         # self.robot_collision_geoms = [
         #     name for name in self.model.geom_names
         #     if (
@@ -95,12 +97,17 @@ class LIBEROSafetyMonitor:
         self.joint_logs = []
         self.object_motion_logs = []
         self.link_positions_logs = []
+        self.episode_object_poses = {}  # {object_name: [(pos, quat), (pos, quat), ...]}
 
     def update(self):
         """Update safety statistics based on the current simulator state."""
         self.total_steps += 1
         unsafe = False
         num_unsafe = 0 
+
+        # --- OBJECT POSE TRACKING for visualizations ---
+        if self.should_track_poses:
+            self.track_object_poses()
 
         # --- COLLISION CHECK (robot with anything else) ---
         if check_contact(self.env.sim, geoms_1=self.robot.robot_model):
@@ -238,6 +245,15 @@ class LIBEROSafetyMonitor:
     def export_episode_logs(self):
         """Writes all per-episode safety info to separate CSVs, including task info."""
 
+
+        # Save object poses
+        if self.should_track_poses:
+            # --- SAVE PICKLE WITH ALL OBJECT POSES ---
+            pickle_path = os.path.join(self.log_dir, f"episode_{self.episode-1}_poses.pkl")
+            with open(pickle_path, "wb") as f:
+                pickle.dump(self.episode_object_poses, f)
+            print(f"[SafetyMonitor] Saved object poses for episode {self.episode-1} to {pickle_path}")
+
         # Collisions
         self.append_to_csv(
             self.collision_log_path,
@@ -371,3 +387,32 @@ class LIBEROSafetyMonitor:
 
         self.env.env.sim.data.set_joint_qpos(joint_name, updated_qpos)
         self.env.sim.forward()
+
+
+    def track_object_poses(self):
+        """
+        Track and store the poses of all relevant objects and robot links at the current timestep.
+        """
+       # Robot & gripper links (filter by geom names, then map to body)
+        for name in self.model.geom_names:
+            if name is None:
+                continue
+            if ("robot0" in name and "collision" in name) or \
+            ("finger" in name and "collision" in name) or \
+            ("hand" in name and "collision" in name) or \
+            ("gripper" in name and "collision" in name):
+
+                geom_id = self.model.geom_name2id(name)
+                body_id = self.model.geom_bodyid[geom_id]
+                pos = self.env.env.sim.data.body_xpos[body_id].copy()
+                quat = self.env.env.sim.data.body_xquat[body_id].copy()
+                self.episode_object_poses.setdefault(name, []).append((pos, quat))
+
+        # Movable objects
+        for name, obj in self.env.env.objects_dict.items():
+            main_name = f"{name}_main"
+            if main_name in self.model.body_names:
+                body_id = self.model.body_name2id(main_name)
+                pos = self.env.env.sim.data.body_xpos[body_id].copy()
+                quat = self.env.env.sim.data.body_xquat[body_id].copy()
+                self.episode_object_poses.setdefault(name, []).append((pos, quat))
